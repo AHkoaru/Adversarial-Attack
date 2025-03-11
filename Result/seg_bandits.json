@@ -1,0 +1,58 @@
+[
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.5108130395309757,
+        "dataSize": 1,
+        "attack": "Bandits",
+        "query": 50,
+        "epsilon": 0.05,
+        "learning_rate": 0.01,
+        "fd_eta": 0.1,
+        "prior_size": 50,
+        "data_independent": true,
+        "batch_size": 10
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.5796162999781312,
+        "dataSize": 50,
+        "attack": "Bandits",
+        "query": 50,
+        "epsilon": 0.05,
+        "learning_rate": 0.01,
+        "fd_eta": 0.1,
+        "prior_size": 50,
+        "data_independent": true,
+        "batch_size": 10
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6132181175774184,
+        "dataSize": 500,
+        "attack": "Bandits",
+        "query": 50,
+        "epsilon": 0.05,
+        "learning_rate": 0.01,
+        "fd_eta": 0.1,
+        "prior_size": 50,
+        "data_independent": true,
+        "batch_size": 10
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6293841271127821,
+        "dataSize": 50,
+        "attack": "Bandits",
+        "query": 200,
+        "epsilon": 0.05,
+        "learning_rate": 0.01,
+        "fd_eta": 0.1,
+        "prior_size": 50,
+        "data_independent": true,
+        "batch_size": 10
+    }
+]

@@ -1,0 +1,37 @@
+[
+    {
+        "model_name": "facebook/mask2former-swin-tiny-cityscapes-semantic",
+        "mIoU": 0.6862841799064948,
+        "dataSize": 500
+    },
+    {
+        "model_name": "facebook/mask2former-swin-small-cityscapes-semantic",
+        "mIoU": 0.7370860511409624,
+        "dataSize": 500
+    },
+    {
+        "model_name": "facebook/mask2former-swin-large-cityscapes-semantic",
+        "mIoU": 0.7508699644816984,
+        "dataSize": 500
+    },
+    {
+        "model_name": "facebook/mask2former-swin-tiny-cityscapes-semantic",
+        "mIoU": 0.693617195379905,
+        "dataSize": 100
+    },
+    {
+        "model_name": "facebook/mask2former-swin-tiny-cityscapes-semantic",
+        "mIoU": 0.7166611233294163,
+        "dataSize": 500
+    },
+    {
+        "model_name": "facebook/mask2former-swin-small-cityscapes-semantic",
+        "mIoU": 0.721541132432192,
+        "dataSize": 500
+    },
+    {
+        "model_name": "facebook/mask2former-swin-large-cityscapes-semantic",
+        "mIoU": 0.7470168412901543,
+        "dataSize": 500
+    }
+]

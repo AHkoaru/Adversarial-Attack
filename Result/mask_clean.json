@@ -1,0 +1,12 @@
+[
+    {
+        "model_name": "facebook/maskformer-resnet101-cityscapes",
+        "mIoU": 0.766617464565947,
+        "dataSize": 500
+    },
+    {
+        "model_name": "facebook/maskformer-resnet101-cityscapes",
+        "mIoU": 0.7287236018233463,
+        "dataSize": 100
+    }
+]

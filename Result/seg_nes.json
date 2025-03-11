@@ -1,0 +1,154 @@
+[
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.5544680927569798,
+        "dataSize": 50,
+        "attack": "NES",
+        "num_steps": 20
+    },
+    {
+        "model_name": "nvidia/segformer-b1-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.5913162300181022,
+        "dataSize": 50,
+        "attack": "NES",
+        "num steps": 20
+    },
+    {
+        "model_name": "nvidia/segformer-b2-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6216397381934243,
+        "dataSize": 50,
+        "attack": "NES",
+        "num steps": 20
+    },
+    {
+        "model_name": "nvidia/segformer-b3-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6219410860931375,
+        "dataSize": 50,
+        "attack": "NES",
+        "num steps": 20
+    },
+    {
+        "model_name": "nvidia/segformer-b4-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.654826576912348,
+        "dataSize": 50,
+        "attack": "NES",
+        "num steps": 20
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.7303275406587926,
+        "dataSize": 50,
+        "attack": "NES",
+        "num steps": 20
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.5933430665953489,
+        "dataSize": 500,
+        "attack": "NES",
+        "num steps": 50
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.5967110269083907,
+        "dataSize": 50,
+        "attack": "NES",
+        "query": 50,
+        "epsilon": 0.05,
+        "learning_rate": 0.01,
+        "samples_per_draw": 50,
+        "batch_size": 10
+    },
+    {
+        "model_name": "nvidia/segformer-b1-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.5922059029139541,
+        "dataSize": 50,
+        "attack": "NES",
+        "query": 50,
+        "epsilon": 0.05,
+        "learning_rate": 0.01,
+        "samples_per_draw": 50,
+        "batch_size": 10
+    },
+    {
+        "model_name": "nvidia/segformer-b2-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6201806214619855,
+        "dataSize": 50,
+        "attack": "NES",
+        "query": 50,
+        "epsilon": 0.05,
+        "learning_rate": 0.01,
+        "samples_per_draw": 50,
+        "batch_size": 10
+    },
+    {
+        "model_name": "nvidia/segformer-b3-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6541281645133011,
+        "dataSize": 50,
+        "attack": "NES",
+        "query": 50,
+        "epsilon": 0.05,
+        "learning_rate": 0.01,
+        "samples_per_draw": 50,
+        "batch_size": 10
+    },
+    {
+        "model_name": "nvidia/segformer-b4-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6689663577371883,
+        "dataSize": 50,
+        "attack": "NES",
+        "query": 50,
+        "epsilon": 0.05,
+        "learning_rate": 0.01,
+        "samples_per_draw": 50,
+        "batch_size": 10
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6807622453758903,
+        "dataSize": 50,
+        "attack": "NES",
+        "query": 50,
+        "epsilon": 0.05,
+        "learning_rate": 0.01,
+        "samples_per_draw": 50,
+        "batch_size": 10
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.565327245723656,
+        "dataSize": 1,
+        "attack": "NES",
+        "query": 200,
+        "epsilon": 0.05,
+        "learning_rate": 0.01,
+        "samples_per_draw": 50,
+        "batch_size": 10
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.7037772200733472,
+        "dataSize": 1,
+        "attack": "NES",
+        "query": 200,
+        "epsilon": 0.05,
+        "learning_rate": 0.01,
+        "samples_per_draw": 50,
+        "batch_size": 10
+    }
+]

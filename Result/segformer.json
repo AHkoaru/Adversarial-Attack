@@ -1,0 +1,205 @@
+[
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-512-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6671840025641897,
+        "dataSize": 150
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-512-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6684698196380615,
+        "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6996175508052226,
+        "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b1-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.7849220808451475,
+        "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b1-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.7849220808451475,
+        "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b2-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.7533669973288735,
+        "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b3-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.7659996307533049,
+        "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b4-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.7690371677898676,
+        "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.8225529106005662,
+        "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.8225529106005662,
+        "dataSize": 500,
+        "attack": "Clean"
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.26077778212715713,
+        "dataSize": 500,
+        "attack": "Clean",
+        "normal": "255"
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.23608842708522823,
+        "dataSize": 150,
+        "attack": "Clean",
+        "normal": "255"
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.8358476082511904,
+        "dataSize": 150,
+        "attack": "Clean",
+        "normal": "255"
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.8141083556718388,
+        "dataSize": 150,
+        "attack": "Random",
+        "normal": "255"
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.8192844216525774,
+        "dataSize": 50,
+        "attack": "Random",
+        "normal": "True",
+        "epsilon": "8/255",
+        "iter": 50
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.8230023602560044,
+        "dataSize": 50,
+        "attack": "Random",
+        "normal": "True",
+        "epsilon": "8/255",
+        "iter": 200
+    },
+    {
+        "model_name": "nvidia/segformer-b1-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.7028746509894572,
+        "dataSize": 50,
+        "attack": "Random",
+        "normal": "True",
+        "epsilon": "8/255",
+        "iter": 200
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.03278449794370323,
+        "dataSize": 10,
+        "attack": "Random",
+        "normal": "True",
+        "epsilon": "8",
+        "iter": 200
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.07199216814859025,
+        "dataSize": 10,
+        "attack": "Random",
+        "normal": "True",
+        "epsilon": "8",
+        "iter": 200
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.0763453266549531,
+        "dataSize": 10,
+        "attack": "Random",
+        "normal": "True",
+        "epsilon": "8",
+        "iter": 200
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.08321823559074416,
+        "dataSize": 50,
+        "attack": "Random",
+        "normal": "True",
+        "epsilon": "8",
+        "iter": 200
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.836179015085848,
+        "dataSize": 50,
+        "attack": "Random",
+        "normal": "True",
+        "epsilon": "8",
+        "iter": 50
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6774973657148372,
+        "dataSize": 10,
+        "attack": "Random",
+        "normal": "True",
+        "epsilon": "8",
+        "iter": 50
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.7437301544166741,
+        "dataSize": 10,
+        "attack": "Random",
+        "normal": "True",
+        "epsilon": "8/255",
+        "iter": 200
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.8018742868654596,
+        "dataSize": 10,
+        "attack": "Random",
+        "normal": "True",
+        "epsilon": "8",
+        "iter": 200
+    }
+]

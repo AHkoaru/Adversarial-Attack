@@ -1,0 +1,25 @@
+[
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6638468081064819,
+        "dataSize": 10,
+        "attack": "Random",
+        "normal": "True",
+        "epsilon": "8",
+        "iter": 200
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6996175508052226,
+        "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6995010372377504,
+        "dataSize": 500,
+        "stride": 256
+    }
+]
