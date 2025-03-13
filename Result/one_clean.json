@@ -1,0 +1,8 @@
+[
+    {
+        "model_name": "shi-labs/oneformer_cityscapes_swin_large",
+        "mIoU": 0.8275248916644042,
+        "Dataset": "val",
+        "dataSize": 500
+    }
+]
