@@ -9,7 +9,6 @@ import random
 
 from Attacker.clean import Clean
 
-
 def convert_to_train_id(label_array):
     """
     Cityscapes의 원본 레이블을 학습에 사용되는 레이블로 변환합니다.
