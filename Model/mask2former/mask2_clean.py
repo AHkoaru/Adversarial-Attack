@@ -20,11 +20,12 @@ except ImportError:
 
 # 설정값을 클래스로 정의하여 관리
 class AttackConfig:
-    #모델 종류 tiny, samll, base-IN24K, large
+    #모델 종류 tiny, small, base-IN24K, large
     model_name = "facebook/mask2former-swin-large-cityscapes-semantic"
     data = "cityscapes"
     DataSize = 500
     batch_size = 10
+    Dataset = "val"
 
 def infer_full_image(image, processor, model, device):
     """
@@ -83,7 +84,7 @@ def main():
     config = AttackConfig()
     
     # Cityscapes 데이터셋 (fine annotation) 사용
-    dataset = Cityscapes(root=f"./DataSet/{config.data}/", split="train", mode="fine", target_type="semantic")
+    dataset = Cityscapes(root=f"./DataSet/{config.data}/", split=config.Dataset, mode="fine", target_type="semantic")
     selected_indices = list(random.sample(range(len(dataset)), config.DataSize))
     
     # 모델 로드
@@ -129,6 +130,7 @@ def main():
     results = {
         "model_name": config.model_name,
         "mIoU": float(mIoU),  # numpy float를 일반 float로 변환
+        "Dataset": config.Dataset,
         "dataSize": config.DataSize
     }
     save_results(results, "mask2_clean.json")

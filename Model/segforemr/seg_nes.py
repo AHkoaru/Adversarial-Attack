@@ -7,8 +7,8 @@ from tqdm import tqdm
 import torch.nn.functional as F
 import random
 
-import Attacker
-
+# 직접 import
+from Attacker.nes import NES
 from utils import label_to_train_id, save_results
 
 class AttackConfig:
@@ -19,6 +19,7 @@ class AttackConfig:
     query: int = 50
     dataSize: int = 1
     batch_size: int = 10
+    Data = "cityscapes"
     model_name: str = "nvidia/segformer-b0-finetuned-cityscapes-1024-1024"
 
 def sliding_window_inference(image, gt_mask, feature_extractor, model, mode, device, tile_size=(1024, 1024), stride=(512, 512)):
@@ -33,7 +34,7 @@ def sliding_window_inference(image, gt_mask, feature_extractor, model, mode, dev
 
     # 메모리 효율적인 NES 생성기 (샘플 수와 스텝 수를 줄임)
     attack_config = AttackConfig()
-    attacker = Attacker.NES(feature_extractor, model, 
+    attacker = NES(feature_extractor, model, 
                    epsilon=attack_config.epsilon,
                    learning_rate=attack_config.learning_rate,
                    samples_per_draw=attack_config.samples_per_draw,
@@ -97,7 +98,7 @@ def sliding_window_inference(image, gt_mask, feature_extractor, model, mode, dev
 if __name__ == "__main__":
     # Cityscapes 데이터셋 (fine annotation) 사용
     attack_config = AttackConfig()
-    dataset = Cityscapes(root="./DataSet/", split="val", mode="fine", target_type="semantic")
+    dataset = Cityscapes(root=f"./DataSet/{attack_config.Data}/", split="val", mode="fine", target_type="semantic")
     DataSize = attack_config.dataSize
     selected_indices = list(random.sample(range(len(dataset)), DataSize))
     batch_size = attack_config.batch_size

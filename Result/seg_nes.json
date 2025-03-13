@@ -150,5 +150,17 @@
         "learning_rate": 0.01,
         "samples_per_draw": 50,
         "batch_size": 10
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.5079522811224747,
+        "dataSize": 1,
+        "attack": "NES",
+        "query": 50,
+        "epsilon": 0.05,
+        "learning_rate": 0.01,
+        "samples_per_draw": 50,
+        "batch_size": 10
     }
 ]

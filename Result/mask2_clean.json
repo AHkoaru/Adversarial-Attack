@@ -33,5 +33,20 @@
         "model_name": "facebook/mask2former-swin-large-cityscapes-semantic",
         "mIoU": 0.7470168412901543,
         "dataSize": 500
+    },
+    {
+        "model_name": "facebook/mask2former-swin-tiny-cityscapes-semantic",
+        "mIoU": 0.6425372010967966,
+        "dataSize": 500
+    },
+    {
+        "model_name": "facebook/mask2former-swin-small-cityscapes-semantic",
+        "mIoU": 0.645306855842983,
+        "dataSize": 500
+    },
+    {
+        "model_name": "facebook/mask2former-swin-large-cityscapes-semantic",
+        "mIoU": 0.6796073112656751,
+        "dataSize": 500
     }
 ]

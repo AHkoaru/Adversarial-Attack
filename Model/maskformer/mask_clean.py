@@ -1,9 +1,7 @@
 import torch
 import numpy as np
 from transformers import MaskFormerFeatureExtractor, MaskFormerForInstanceSegmentation
-from PIL import Image
 from torchvision.datasets import Cityscapes
-from PIL import Image
 from tqdm import tqdm
 import random
 import os
@@ -18,8 +16,9 @@ from utils import label_to_train_id, save_results
 class AttackConfig:
     model_name = "facebook/maskformer-resnet101-cityscapes"
     data = "cityscapes"
-    DataSize = 100
+    DataSize = 500
     batch_size = 10
+    Dataset = "val"
 
 def infer_full_image(image, processor, model, device):
     """
@@ -76,7 +75,7 @@ def main():
     config = AttackConfig()
     
     # Cityscapes 데이터셋 (fine annotation) 사용
-    dataset = Cityscapes(root=f"./DataSet/{config.data}/", split="val", mode="fine", target_type="semantic")
+    dataset = Cityscapes(root=f"./DataSet/{config.data}/", split=config.Dataset, mode="fine", target_type="semantic")
     selected_indices = list(random.sample(range(len(dataset)), config.DataSize))
     
     # 모델 로드
@@ -121,6 +120,7 @@ def main():
     results = {
         "model_name": config.model_name,
         "mIoU": float(mIoU),  # numpy float를 일반 float로 변환
+        "Dataset": config.Dataset,
         "dataSize": config.DataSize
     }
     save_results(results, "mask_clean.json")
