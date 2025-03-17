@@ -1,2 +1,4 @@
 transformers
 scipy
+evaluate
+scikit-learn
