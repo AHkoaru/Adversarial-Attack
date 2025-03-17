@@ -4,5 +4,20 @@
         "mIoU": 0.8275248916644042,
         "Dataset": "val",
         "dataSize": 500
+    },
+    {
+        "model_name": "shi-labs/oneformer_cityscapes_swin_large",
+        "mIoU": 0.8275248916644042,
+        "Dataset": "val",
+        "dataSize": 500,
+        "mean_precision": 0.9037374897801247,
+        "mean_recall": 0.9000413674738208
+    },
+    {
+        "model_name": "shi-labs/oneformer_cityscapes_swin_large",
+        "mIoU": 0.6719489440371087,
+        "Dataset": "val",
+        "dataSize": 500,
+        "split_inference": true
     }
 ]

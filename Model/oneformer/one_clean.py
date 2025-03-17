@@ -5,6 +5,7 @@ from torchvision.datasets import Cityscapes
 from tqdm import tqdm
 import random
 import os
+import evaluate
 # utils.py 파일 import (더 깔끔한 방식)
 
 import sys
@@ -20,57 +21,76 @@ class AttackConfig:
     batch_size = 10
     Dataset = "val"
 
-def infer_full_image(image, processor, model, device):
+def compute_metrics(eval_pred, metric, num_labels):
+    pred, labels = eval_pred
+    
+    # pred가 이미 최종 예측 결과인 경우 (클래스 인덱스)
+    # 메트릭 계산
+    metrics = metric.compute(
+        predictions=pred,
+        references=labels,
+        num_labels=num_labels,
+        ignore_index=255,
+        reduce_labels=False,
+    )
+    return metrics
+
+def infer_split_image(image, processor, model, device, split_size=(512, 1024)):
     """
-    전체 이미지에 대한 추론을 수행합니다.
+    큰 이미지를 여러 조각으로 나누어 추론한 후 결과를 합칩니다.
     
     Args:
         image: 입력 이미지 (PIL Image)
         processor: 이미지 전처리기
         model: 세그멘테이션 모델
         device: 연산 장치 (CPU/GPU)
+        split_size: 분할할 이미지 크기 (height, width)
         
     Returns:
-        numpy array: 세그멘테이션 결과 (height, width)
+        numpy array: 합쳐진 세그멘테이션 결과 (height, width)
     """
-    inputs = processor(images=image, task_inputs=["semantic"], return_tensors="pt").to(device)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    # Mask2Former 모델의 후처리
-    result = processor.post_process_semantic_segmentation(
-        outputs, target_sizes=[image.size[::-1]])[0]
-    # 결과가 Tensor인 경우 numpy 배열로 변환
-    result = result.cpu().numpy().astype(np.int64)
+    from PIL import Image
+    import numpy as np
+    import torch
+    
+    # 원본 이미지 크기 확인
+    width, height = image.size
+    split_height, split_width = split_size
+    
+    # 결과를 저장할 배열 초기화
+    result = np.zeros((height, width), dtype=np.int64)
+    
+    # 이미지를 4등분하여 처리
+    for y in range(0, height, split_height):
+        for x in range(0, width, split_width):
+            # 이미지 조각 추출
+            x_end = min(x + split_width, width)
+            y_end = min(y + split_height, height)
+            
+            # 이미지 조각 생성
+            tile = image.crop((x, y, x_end, y_end))
+            
+            # 모델 추론
+            inputs = processor(images=tile, task_inputs=["semantic"], return_tensors="pt").to(device)
+            with torch.no_grad():
+                outputs = model(**inputs)
+                
+            # 후처리
+            tile_result = processor.post_process_semantic_segmentation(
+                outputs, target_sizes=[(tile.size[1], tile.size[0])])[0]
+            
+            # 결과를 numpy 배열로 변환
+            tile_result = tile_result.cpu().numpy().astype(np.int64)
+            
+            # 결과 배열에 조각 결과 삽입
+            result[y:y_end, x:x_end] = tile_result
+    
     return result
 
-def calculate_iou(confusion_matrix, num_classes=19):
+def main_with_split_inference():
     """
-    혼동 행렬에서 IoU를 계산합니다.
-    
-    Args:
-        confusion_matrix: 클래스별 혼동 행렬
-        num_classes: 클래스 수
-        
-    Returns:
-        tuple: (mIoU, 클래스별 IoU 리스트)
+    이미지를 분할하여 추론하는 메인 함수
     """
-    iou_per_class = []
-    for i in range(num_classes):
-        tp = confusion_matrix[i, i]
-        fp = confusion_matrix[:, i].sum() - tp
-        fn = confusion_matrix[i, :].sum() - tp
-        union = tp + fp + fn
-        iou = tp / union if union != 0 else float("nan")
-        iou_per_class.append(iou)
-
-    mIoU = np.nanmean(iou_per_class)
-    return mIoU, iou_per_class
-
-def main():
-    """
-    메인 함수: 모델 로드, 데이터셋 처리, 평가 수행
-    """
-    # 설정 로드
     config = AttackConfig()
     
     # Cityscapes 데이터셋 (fine annotation) 사용
@@ -87,42 +107,44 @@ def main():
     
     # 평가 준비
     num_classes = 19
-    confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
-
+    matrix = evaluate.load("mean_iou")
+    miou_metrics_list = []
+    
     # 배치 처리 및 평가
-    for batch_start in tqdm(range(0, len(selected_indices), config.batch_size), desc="batch"):
+    for batch_start in tqdm(range(0, len(selected_indices), config.batch_size), desc="배치 처리"):
         batch_indices = selected_indices[batch_start:batch_start+config.batch_size]
-        for idx in tqdm(batch_indices, desc="image", leave=False):
+        for idx in tqdm(batch_indices, desc="이미지 처리", leave=False):
             image, gt_mask = dataset[idx]
-            pred = infer_full_image(image, processor, model, device)
+            
+            # 이미지 크기 확인 (Cityscapes는 일반적으로 1024x2048)
+            width, height = image.size
+            
+            # 이미지가 충분히 큰 경우에만 분할 추론 적용
+            pred = infer_split_image(image, processor, model, device)
             
             # GT 마스크 전처리
             gt = label_to_train_id(gt_mask)
             
-            # 명시적으로 int64 데이터 타입으로 변환
-            pred_flat = pred.flatten().astype(np.int64)
-            gt_flat = gt.flatten().astype(np.int64)
-            mask = gt_flat != 255
-            pred_flat = pred_flat[mask]
-            gt_flat = gt_flat[mask]
-
-            combined = num_classes * gt_flat + pred_flat
-            cm = np.bincount(combined, minlength=num_classes * num_classes).reshape(num_classes, num_classes)
-            confusion_matrix += cm
-
-    # IoU 계산
-    mIoU, iou_per_class = calculate_iou(confusion_matrix)
-    print("mIoU:", mIoU)
-    print("클래스별 IoU:", iou_per_class)
-
+            # 메트릭 계산
+            metrics = compute_metrics([pred, gt], matrix, num_classes)
+            miou_metrics_list.append(metrics["mean_iou"])
+            # print(metrics["mean_iou"])
+    
+    # 평균 mIoU 계산
+    miou_metrics = np.array(miou_metrics_list)
+    mean_miou = np.mean(miou_metrics)
+    print(f"평균 mIoU: {mean_miou:.4f}")
+    
     # 결과 저장
     results = {
         "model_name": config.model_name,
-        "mIoU": float(mIoU),  # numpy float를 일반 float로 변환
+        "mIoU": float(mean_miou),
         "Dataset": config.Dataset,
-        "dataSize": config.DataSize
+        "dataSize": config.DataSize,
+        "split_inference": True
     }
-    save_results(results, "one_clean.json")
+    save_results(results, "one_split_inference.json")
 
+# 분할 추론 실행
 if __name__ == "__main__":
-    main()
+    main_with_split_inference()
