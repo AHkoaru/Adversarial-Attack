@@ -5,6 +5,12 @@ from torchvision.datasets import Cityscapes
 from tqdm import tqdm
 import random
 import os
+import evaluate
+
+import sys
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.append(project_root)
+from utils import label_to_train_id, save_results, compute_metrics
 # utils.py 파일 import (더 깔끔한 방식)
 
 import sys
@@ -19,6 +25,30 @@ class AttackConfig:
     DataSize = 500
     batch_size = 10
     Dataset = "val"
+
+def compute_metrics(eval_pred, metric, num_labels):
+    """
+    평가 메트릭을 계산합니다.
+    
+    Args:
+        eval_pred: (예측, 라벨) 튜플
+        metric: 사용할 메트릭 객체
+        num_labels: 클래스 수
+        
+    Returns:
+        dict: 계산된 메트릭
+    """
+    pred, labels = eval_pred
+    
+    # 메트릭 계산
+    metrics = metric.compute(
+        predictions=pred,
+        references=labels,
+        num_labels=num_labels,
+        ignore_index=255,
+        reduce_labels=False,
+    )
+    return metrics
 
 def infer_full_image(image, processor, model, device):
     """
@@ -44,29 +74,6 @@ def infer_full_image(image, processor, model, device):
     result = result.cpu().numpy().astype(np.int64)
     return result
 
-def calculate_iou(confusion_matrix, num_classes=19):
-    """
-    혼동 행렬에서 IoU를 계산합니다.
-    
-    Args:
-        confusion_matrix: 클래스별 혼동 행렬
-        num_classes: 클래스 수
-        
-    Returns:
-        tuple: (mIoU, 클래스별 IoU 리스트)
-    """
-    iou_per_class = []
-    for i in range(num_classes):
-        tp = confusion_matrix[i, i]
-        fp = confusion_matrix[:, i].sum() - tp
-        fn = confusion_matrix[i, :].sum() - tp
-        union = tp + fp + fn
-        iou = tp / union if union != 0 else float("nan")
-        iou_per_class.append(iou)
-
-    mIoU = np.nanmean(iou_per_class)
-    return mIoU, iou_per_class
-
 def main():
     """
     메인 함수: 모델 로드, 데이터셋 처리, 평가 수행
@@ -88,7 +95,8 @@ def main():
     
     # 평가 준비
     num_classes = 19
-    confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
+    matrix = evaluate.load("mean_iou")
+    miou_metrics_list = []
 
     # 배치 처리 및 평가
     for batch_start in tqdm(range(0, len(selected_indices), config.batch_size), desc="batch"):
@@ -100,26 +108,20 @@ def main():
             # GT 마스크 전처리
             gt = label_to_train_id(gt_mask)
             
-            # 명시적으로 int64 데이터 타입으로 변환
-            pred_flat = pred.flatten().astype(np.int64)
-            gt_flat = gt.flatten().astype(np.int64)
-            mask = gt_flat != 255
-            pred_flat = pred_flat[mask]
-            gt_flat = gt_flat[mask]
-
-            combined = num_classes * gt_flat + pred_flat
-            cm = np.bincount(combined, minlength=num_classes * num_classes).reshape(num_classes, num_classes)
-            confusion_matrix += cm
-
-    # IoU 계산
-    mIoU, iou_per_class = calculate_iou(confusion_matrix)
-    print("mIoU:", mIoU)
-    print("클래스별 IoU:", iou_per_class)
+            # evaluate 라이브러리를 사용하여 메트릭 계산
+            metrics = compute_metrics([pred, gt], matrix, num_classes)
+            miou_metrics_list.append(metrics["mean_iou"])
+    
+    # 평균 mIoU 계산
+    miou_metrics = np.array(miou_metrics_list)
+    mean_miou = np.mean(miou_metrics)
+    print("model_name:", config.model_name)
+    print(f"평균 mIoU: {mean_miou:.4f}")
 
     # 결과 저장
     results = {
         "model_name": config.model_name,
-        "mIoU": float(mIoU),  # numpy float를 일반 float로 변환
+        "mIoU": float(mean_miou),
         "Dataset": config.Dataset,
         "dataSize": config.DataSize
     }

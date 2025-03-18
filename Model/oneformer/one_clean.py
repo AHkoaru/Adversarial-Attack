@@ -11,7 +11,7 @@ import evaluate
 import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.append(project_root)
-from utils import label_to_train_id, save_results
+from utils import label_to_train_id, save_results, compute_metrics
 
 # 설정값을 클래스로 정의하여 관리
 class AttackConfig:
@@ -143,7 +143,7 @@ def main_with_split_inference():
         "dataSize": config.DataSize,
         "split_inference": True
     }
-    save_results(results, "one_split_inference.json")
+    save_results(results, "one_clean.json")
 
 # 분할 추론 실행
 if __name__ == "__main__":

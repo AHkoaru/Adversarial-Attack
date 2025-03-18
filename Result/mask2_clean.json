@@ -48,5 +48,11 @@
         "model_name": "facebook/mask2former-swin-large-cityscapes-semantic",
         "mIoU": 0.6796073112656751,
         "dataSize": 500
+    },
+    {
+        "model_name": "facebook/mask2former-swin-large-cityscapes-semantic",
+        "mIoU": 0.5335928452380796,
+        "Dataset": "val",
+        "dataSize": 500
     }
 ]

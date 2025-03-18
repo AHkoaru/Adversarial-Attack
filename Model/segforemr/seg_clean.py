@@ -10,6 +10,9 @@ import evaluate
 import json
 import os
 import sys
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.append(project_root)
+from utils import label_to_train_id, save_results, compute_metrics
 
 # Attacker 모듈 경로 추가
 sys.path.append('/workspace')
@@ -26,32 +29,6 @@ def convert_to_train_id(label_array):
     }
     return np.vectorize(lambda x: mapping.get(x, 255))(label_array)
 
-def save_results(results, filename="mask2_clean.json"):
-    """
-    결과를 JSON 파일에 저장합니다.
-    
-    Args:
-        results: 저장할 결과 딕셔너리
-        filename: 저장할 파일 이름
-    """
-    # 현재 스크립트 파일이 있는 디렉토리에 JSON 파일 저장
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(current_dir, filename)
-    
-    if os.path.exists(file_path):
-        with open(file_path, "r") as f:
-            # 기존 파일이 리스트 형식이 아닐 경우 리스트로 감싸줍니다.
-            existing_results = json.load(f)
-            if not isinstance(existing_results, list):
-                existing_results = [existing_results]
-    else:
-        existing_results = []
-    
-    existing_results.append(results)
-    
-    with open(file_path, "w") as f:
-        json.dump(existing_results, f, ensure_ascii=False, indent=4)
-    print(f"결과가 '{file_path}' 파일에 추가 저장되었습니다.")
 
 def compute_metrics(eval_pred, metric, num_labels):
     pred, labels = eval_pred
@@ -174,20 +151,6 @@ if __name__ == "__main__":
         "dataSize": DataSize,
     }
     
-    import json, os
     results_file = "seg_clean.json"
-        
-    if os.path.exists(results_file):
-        with open(results_file, "r") as f:
-            # 기존 파일이 리스트 형식이 아닐 경우 리스트로 감싸줍니다.
-            existing_results = json.load(f)
-            if not isinstance(existing_results, list):
-                existing_results = [existing_results]
-    else:
-        existing_results = []
-
-    existing_results.append(results)
-
-    with open(results_file, "w") as f:
-        json.dump(existing_results, f, ensure_ascii=False, indent=4)
+    save_results(results, results_file)
     print("결과가 'seg_clean.json' 파일에 추가 저장되었습니다.")
