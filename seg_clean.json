@@ -1,0 +1,8 @@
+[
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.5522221917637191,
+        "dataSize": 500
+    }
+]

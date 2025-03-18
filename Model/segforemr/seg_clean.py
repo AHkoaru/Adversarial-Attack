@@ -6,7 +6,13 @@ from PIL import Image
 from tqdm import tqdm
 import torch.nn.functional as F 
 import random
+import evaluate
+import json
+import os
+import sys
 
+# Attacker 모듈 경로 추가
+sys.path.append('/workspace')
 from Attacker.clean import Clean
 
 def convert_to_train_id(label_array):
@@ -46,6 +52,20 @@ def save_results(results, filename="mask2_clean.json"):
     with open(file_path, "w") as f:
         json.dump(existing_results, f, ensure_ascii=False, indent=4)
     print(f"결과가 '{file_path}' 파일에 추가 저장되었습니다.")
+
+def compute_metrics(eval_pred, metric, num_labels):
+    pred, labels = eval_pred
+    
+    # pred가 이미 최종 예측 결과인 경우 (클래스 인덱스)
+    # 메트릭 계산
+    metrics = metric.compute(
+        predictions=pred,
+        references=labels,
+        num_labels=num_labels,
+        ignore_index=255,
+        reduce_labels=False,
+    )
+    return metrics
 
 def sliding_window_inference(image, feature_extractor, model, mode, device, tile_size=(1024, 1024), stride=(512, 512)):
     """
@@ -104,7 +124,7 @@ def sliding_window_inference(image, feature_extractor, model, mode, device, tile
 
 if __name__ == "__main__":
     # Cityscapes 데이터셋 (fine annotation) 사용
-    dataset = Cityscapes(root="./DataSet/", split="val", mode="fine", target_type="semantic")
+    dataset = Cityscapes(root="./DataSet/cityscapes/", split="val", mode="fine", target_type="semantic")
     DataSize = 500
     selected_indices = list(random.sample(range(len(dataset)), DataSize))
     batch_size = 10
@@ -120,8 +140,8 @@ if __name__ == "__main__":
     
     num_classes = 19
     mode = "bilinear"
-    confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
-
+    matrix = evaluate.load("mean_iou")
+    miou_metrics_list = []
     # 배치 처리 및 개별 이미지 처리에 tqdm 적용
     for batch_start in tqdm(range(0, len(selected_indices), batch_size), desc="Batch"):
         batch_indices = selected_indices[batch_start:batch_start + batch_size]  
@@ -137,30 +157,14 @@ if __name__ == "__main__":
             # GT 마스크 전처리
             gt = np.array(gt_mask) if isinstance(gt_mask, Image.Image) else np.array(gt_mask)
             gt = convert_to_train_id(gt)
-            
-            pred_flat = pred.flatten()
-            gt_flat = gt.flatten()
-            mask = gt_flat != 255
-            pred_flat = pred_flat[mask]
-            gt_flat = gt_flat[mask]
-            
-            combined = num_classes * gt_flat + pred_flat
-            cm = np.bincount(combined, minlength=num_classes * num_classes).reshape(num_classes, num_classes)
-            confusion_matrix += cm
 
+            metrics = compute_metrics([pred, gt], matrix, num_classes)
+            miou_metrics_list.append(metrics["mean_iou"])
     # IoU 계산
-    iou_per_class = []
-    for i in range(num_classes):
-        tp = confusion_matrix[i, i]
-        fp = confusion_matrix[:, i].sum() - tp
-        fn = confusion_matrix[i, :].sum() - tp
-        union = tp + fp + fn
-        iou = tp / union if union != 0 else float("nan")
-        iou_per_class.append(iou)
 
-    mIoU = np.nanmean(iou_per_class)
+
+    mIoU = np.nanmean(miou_metrics_list)
     print("mIoU:", mIoU)
-    print("클래스별 IoU:", iou_per_class)
 
         # 모델 이름, 모드, mIoU 값 저장
     results = {
