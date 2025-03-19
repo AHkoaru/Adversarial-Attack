@@ -19,5 +19,13 @@
         "Dataset": "val",
         "dataSize": 500,
         "split_inference": true
+    },
+    {
+        "model_name": "shi-labs/oneformer_cityscapes_swin_large",
+        "transform_zero_to_nan": true,
+        "mIoU": 0.8049460757398081,
+        "Dataset": "val",
+        "dataSize": 500,
+        "split_inference": true
     }
 ]

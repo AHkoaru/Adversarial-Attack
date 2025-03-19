@@ -26,5 +26,17 @@
         "mIoU": 0.6388206482051687,
         "Dataset": "val",
         "dataSize": 500
+    },
+    {
+        "model_name": "facebook/maskformer-resnet101-cityscapes",
+        "mIoU": 0.74557204970157,
+        "Dataset": "val",
+        "dataSize": 500
+    },
+    {
+        "model_name": "facebook/maskformer-resnet101-cityscapes",
+        "mIoU": 0.6864744602626859,
+        "Dataset": "val",
+        "dataSize": 1
     }
 ]

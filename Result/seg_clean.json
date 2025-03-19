@@ -27,5 +27,36 @@
         "mode": "bilinear",
         "mIoU": 0.5522221917637191,
         "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.009832925438265677,
+        "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.03367046808834698,
+        "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.009832925438265673,
+        "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.5522221917637191,
+        "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "transform_zero_to_nan": true,
+        "mIoU": 0.6908086899228685,
+        "dataSize": 500
     }
 ]
