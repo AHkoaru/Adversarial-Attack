@@ -14,6 +14,13 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.append(project_root)
 from utils import label_to_train_id, save_results, compute_metrics
 
+Config = {
+    "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+    "mode": "bilinear",
+    "DataSize": 500,
+    "batch_size": 10
+}
+
 # Attacker 모듈 경로 추가
 sys.path.append('/workspace')
 from Attacker.clean import Clean
@@ -54,12 +61,13 @@ def sliding_window_inference(image, feature_extractor, model, mode, device, tile
     width, height = image.size
     tile_width, tile_height = tile_size
 
-    attaker = Clean()  # Clean 클래스 인스턴스 생성
-    image = attaker.attack(image)
+    # attaker = Clean()  # Clean 클래스 인스턴스 생성
+    # image = attaker.attack(image)
+    # 전처리가 제대로 적용되지 않거나 변형이 있을 수 있습니다.
 
     # 이미지가 타일 크기보다 작으면 전체 이미지에 대해 모델 추론 진행 전에 clean 적용
     if width < tile_width or height < tile_height:
-        image = attaker.attack(image)
+        # image = attaker.attack(image)
         inputs = feature_extractor(images=image, return_tensors="pt").to(device)
         with torch.no_grad():
             logits = model(**inputs).logits
@@ -84,10 +92,10 @@ def sliding_window_inference(image, feature_extractor, model, mode, device, tile
             x_end = x_start + tile_width
             y_end = y_start + tile_height
 
-            # 타일 추출 후 clean 적용
-            tile = image[y_start:y_end, x_start:x_end]
-            # tile = attaker.attack(tile)
-
+            # PIL Image에서는 crop 메서드를 사용하여 이미지 영역 추출
+            # crop 메서드는 (left, upper, right, lower) 좌표를 사용
+            tile = image.crop((x_start, y_start, x_end, y_end))
+            
             inputs = feature_extractor(images=tile, return_tensors="pt").to(device)
             with torch.no_grad():
                 logits = model(**inputs).logits
@@ -103,11 +111,11 @@ def sliding_window_inference(image, feature_extractor, model, mode, device, tile
 if __name__ == "__main__":
     # Cityscapes 데이터셋 (fine annotation) 사용
     dataset = Cityscapes(root="./DataSet/cityscapes/", split="val", mode="fine", target_type="semantic")
-    DataSize = 500
+    DataSize = Config["DataSize"]
     selected_indices = list(random.sample(range(len(dataset)), DataSize))
-    batch_size = 10
+    batch_size = Config["batch_size"]
 
-    model_name = "nvidia/segformer-b0-finetuned-cityscapes-1024-1024"
+    model_name = Config["model_name"]
     feature_extractor = SegformerFeatureExtractor.from_pretrained(model_name, do_rescale=False)
     model = SegformerForSemanticSegmentation.from_pretrained(model_name)
     model.eval()
@@ -117,9 +125,11 @@ if __name__ == "__main__":
     print(f"사용 중인 디바이스: {device}")
     
     num_classes = 19
-    mode = "bilinear"
+    mode = Config["mode"]
     matrix = evaluate.load("mean_iou")
     miou_metrics_list = []
+    class_ious_list = []  # 각 이미지의 클래스별 IoU 저장 리스트
+    
     # 배치 처리 및 개별 이미지 처리에 tqdm 적용
     for batch_start in tqdm(range(0, len(selected_indices), batch_size), desc="Batch"):
         batch_indices = selected_indices[batch_start:batch_start + batch_size]
@@ -137,39 +147,72 @@ if __name__ == "__main__":
             gt = convert_to_train_id(gt)
 
             metrics = compute_metrics([pred, gt], matrix, num_classes)
-            miou_metrics_list.append(metrics["mean_iou"])
+            miou_metrics_list.append(metrics)
+            
+            # 클래스별 IoU 저장
+            class_ious = metrics.get("per_category_iou", {})
+            
+            # 각 이미지의 클래스별 IoU를 저장할 딕셔너리 생성
+            image_class_ious = {}
+            
+            # numpy.ndarray인 경우
+            if isinstance(class_ious, np.ndarray):
+                for class_idx, iou in enumerate(class_ious):
+                    image_class_ious[str(class_idx)] = float(iou)
+                    print(f"  클래스 {class_idx}: {iou:.4f}")
+            # 딕셔너리인 경우
+            elif isinstance(class_ious, dict):
+                for class_idx, iou in class_ious.items():
+                    image_class_ious[str(class_idx)] = float(iou)
+                    print(f"  클래스 {class_idx}: {iou:.4f}")
+            
+            # 이미지 인덱스와 함께 저장
+            class_ious_list.append({
+                "image_idx": idx,
+                "class_ious": image_class_ious,
+                "mean_iou": float(metrics["mean_iou"])
+            })
+            
+            print(f"  mIoU: {metrics['mean_iou']:.4f}")
+            print("-" * 50)
 
-
-    mIoU = np.nanmean(miou_metrics_list)
-    print("mIoU:", mIoU)
-
-    # 상위 miou 100개 추출 및 저장
-    miou_with_indices = list(zip(selected_indices, miou_metrics_list))
-    miou_with_indices.sort(key=lambda x: x[1], reverse=True)  # miou 값으로 내림차순 정렬
+    # 각 이미지의 mean_iou 값을 추출하여 평균 계산
+    mean_iou_values = [metrics["mean_iou"] for metrics in miou_metrics_list]
+    accuracy_values = [metrics["mean_accuracy"] for metrics in miou_metrics_list]
+    mIoU = np.nanmean(mean_iou_values)
+    print("전체 mIoU:", mIoU)
     
-    top_100_count = min(100, len(miou_with_indices))  # 전체 개수가 100개 미만일 경우 고려
-    top_100_indices_miou = miou_with_indices[:top_100_count]
+    # 전체 데이터셋의 클래스별 평균 IoU 계산 및 출력
+    avg_class_ious = {}
+    for class_idx in range(num_classes):
+        # 수정된 class_ious_list 구조에 맞게 변경
+        class_ious = [img_data["class_ious"].get(str(class_idx), 0) 
+                     for img_data in class_ious_list 
+                     if str(class_idx) in img_data["class_ious"]]
+        if class_ious:
+            avg_class_ious[str(class_idx)] = float(np.nanmean(class_ious))
     
-    top_100_indices = [item[0] for item in top_100_indices_miou]
-    top_100_mious = [item[1] for item in top_100_indices_miou]
-    
-    top_100_mean_miou = np.nanmean(top_100_mious)
-    print(f"상위 {top_100_count}개 이미지의 평균 mIoU: {top_100_mean_miou}")
+    print("\n전체 데이터셋의 클래스별 평균 IoU:")
+    for class_idx, avg_iou in avg_class_ious.items():
+        print(f"  클래스 {class_idx}: {avg_iou:.4f}")
 
     # 모델 이름, 모드, mIoU 값 저장
     results = {
         "model_name": model_name,
         "mode": mode,
-        "mIoU": mIoU,
+        "mIoU": float(mIoU),  # JSON 직렬화를 위해 numpy 타입을 파이썬 float로 변환
         "dataSize": DataSize,
-        "miou_list": miou_metrics_list,
-        "top_100": {
-            "indices": top_100_indices,
-            "mious": top_100_mious,
-            "mean_miou": top_100_mean_miou
-        }
+        "miou_list": [float(m) for m in mean_iou_values],
+        "mean_accuracy": float(np.nanmean(accuracy_values)),
+        "class_ious": avg_class_ious,  # 전체 클래스별 평균 IoU 저장
+        "per_image_class_ious": class_ious_list  # 각 이미지별 클래스별 IoU 저장
     }
     
-    results_file = "top_100_miou.json"
+    results_file = "class_miou.json"
     save_results(results, results_file)
-    print("결과가 'top_100_miou.json' 파일에 추가 저장되었습니다.")
+    print("결과가 'class_miou.json' 파일에 추가 저장되었습니다.")
+    
+    # 각 이미지별 클래스별 IoU를 별도 파일로도 저장
+    with open("per_image_class_ious.json", "w") as f:
+        json.dump(class_ious_list, f, indent=2)
+    print("각 이미지별 클래스별 IoU가 'per_image_class_ious.json' 파일에 저장되었습니다.")
