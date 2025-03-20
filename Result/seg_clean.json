@@ -31,24 +31,6 @@
     {
         "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
         "mode": "bilinear",
-        "mIoU": 0.009832925438265677,
-        "dataSize": 500
-    },
-    {
-        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
-        "mode": "bilinear",
-        "mIoU": 0.03367046808834698,
-        "dataSize": 500
-    },
-    {
-        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
-        "mode": "bilinear",
-        "mIoU": 0.009832925438265673,
-        "dataSize": 500
-    },
-    {
-        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
-        "mode": "bilinear",
         "mIoU": 0.5522221917637191,
         "dataSize": 500
     },
@@ -58,5 +40,69 @@
         "transform_zero_to_nan": true,
         "mIoU": 0.6908086899228685,
         "dataSize": 500
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.5509664155951093,
+        "dataSize": 10,
+        "miou_list": [
+            0.5074089737051853,
+            0.6242715430825337,
+            0.543550275051203,
+            0.5099983121835597,
+            0.5303228587278801,
+            0.4827702163025019,
+            0.7295914220258882,
+            0.4917159899327566,
+            0.5535392185648033,
+            0.536495346374781
+        ],
+        "mean_accuracy": 0.6833690421497695
+    },
+    {
+        "accuracy": "accuracy"
+    },
+    {
+        "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.5522221917637191,
+        "dataSize": 500,
+        "mean_accuracy": 0.7180920968179263
+    },
+    {
+        "model_name": "nvidia/segformer-b1-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6444856745312681,
+        "dataSize": 500,
+        "mean_accuracy": 0.7166271267115042
+    },
+    {
+        "model_name": "nvidia/segformer-b2-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6062098317544466,
+        "dataSize": 500,
+        "mean_accuracy": 0.7873654367283507
+    },
+    {
+        "model_name": "nvidia/segformer-b3-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6203970565796665,
+        "dataSize": 500,
+        "mean_accuracy": 0.640464477091927
+    },
+    {
+        "model_name": "nvidia/segformer-b4-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6300024732242077,
+        "dataSize": 500,
+        "mean_accuracy": 0.6820984072793741
+    },
+    {
+        "model_name": "nvidia/segformer-b5-finetuned-cityscapes-1024-1024",
+        "mode": "bilinear",
+        "mIoU": 0.6841372571899075,
+        "dataSize": 500,
+        "mean_accuracy": 0.903248414511849
     }
 ]

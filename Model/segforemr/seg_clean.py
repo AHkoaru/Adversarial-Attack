@@ -18,6 +18,13 @@ from utils import label_to_train_id, save_results, compute_metrics
 sys.path.append('/workspace')
 from Attacker.clean import Clean
 
+Config = {
+    "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
+    "mode": "bilinear",
+    "DataSize": 500,
+    "batch_size": 10
+}
+
 def convert_to_train_id(label_array):
     """
     Cityscapes의 원본 레이블을 학습에 사용되는 레이블로 변환합니다.
@@ -42,6 +49,17 @@ def compute_metrics(eval_pred, metric, num_labels):
         ignore_index=255,
         reduce_labels=False,
     )
+    
+    # if "per_category_iou" in metrics:
+    # # IoU 값들을 numpy 배열로 변환
+    #     iou_values = np.array(list(metrics["per_category_iou"]))
+        
+    #     # 0값을 NaN으로 변환 (등장하지 않은 클래스의 IoU가 0으로 계산된 경우)
+    #     iou_values = np.where(iou_values == 0, np.nan, iou_values)
+        
+    #     # NaN 값을 무시하고 평균 계산
+    #     metrics["mean_iou"] = float(np.nanmean(iou_values))
+
     return metrics
 
 def sliding_window_inference(image, feature_extractor, model, mode, device, tile_size=(1024, 1024), stride=(512, 512)):
@@ -102,11 +120,11 @@ def sliding_window_inference(image, feature_extractor, model, mode, device, tile
 if __name__ == "__main__":
     # Cityscapes 데이터셋 (fine annotation) 사용
     dataset = Cityscapes(root="./DataSet/cityscapes/", split="val", mode="fine", target_type="semantic")
-    DataSize = 500
+    DataSize = Config["DataSize"]
     selected_indices = list(random.sample(range(len(dataset)), DataSize))
-    batch_size = 10
+    batch_size = Config["batch_size"]
 
-    model_name = "nvidia/segformer-b0-finetuned-cityscapes-1024-1024"
+    model_name = Config["model_name"]
     feature_extractor = SegformerFeatureExtractor.from_pretrained(model_name, do_rescale=False)
     model = SegformerForSemanticSegmentation.from_pretrained(model_name)
     model.eval()
@@ -116,12 +134,12 @@ if __name__ == "__main__":
     print(f"사용 중인 디바이스: {device}")
     
     num_classes = 19
-    mode = "bilinear"
+    mode = Config["mode"]
     matrix = evaluate.load("mean_iou")
     miou_metrics_list = []
     # 배치 처리 및 개별 이미지 처리에 tqdm 적용
     for batch_start in tqdm(range(0, len(selected_indices), batch_size), desc="Batch"):
-        batch_indices = selected_indices[batch_start:batch_start + batch_size]  
+        batch_indices = selected_indices[batch_start:batch_start + batch_size]
         for idx in tqdm(batch_indices, desc="Image", leave=False):
             image, gt_mask = dataset[idx]
             # 슬라이딩 윈도우 추론 적용
@@ -137,11 +155,11 @@ if __name__ == "__main__":
 
             metrics = compute_metrics([pred, gt], matrix, num_classes)
             miou_metrics_list.append(metrics["mean_iou"])
-    # IoU 계산
-
+            mean_accuracy = metrics["mean_accuracy"]
 
     mIoU = np.nanmean(miou_metrics_list)
-    print("mIoU:", mIoU)
+    mean_accuracy = np.nanmean(mean_accuracy)
+    # print("mIoU:", mIoU)
 
         # 모델 이름, 모드, mIoU 값 저장
     results = {
@@ -149,6 +167,7 @@ if __name__ == "__main__":
         "mode": mode,
         "mIoU": mIoU,
         "dataSize": DataSize,
+        "mean_accuracy": mean_accuracy
     }
     
     results_file = "seg_clean.json"
