@@ -17,7 +17,7 @@ from utils import label_to_train_id, save_results, compute_metrics
 class AttackConfig:
     model_name = "shi-labs/oneformer_cityscapes_swin_large"
     data = "cityscapes"
-    DataSize = 500
+    DataSize = 100
     batch_size = 10
     Dataset = "val"
 
@@ -33,6 +33,7 @@ def compute_metrics(eval_pred, metric, num_labels):
         ignore_index=255,
         reduce_labels=False,
     )
+
     return metrics
 
 def infer_split_image(image, processor, model, device, split_size=(512, 1024)):
@@ -87,7 +88,7 @@ def infer_split_image(image, processor, model, device, split_size=(512, 1024)):
     
     return result
 
-def main_with_split_inference():
+def main():
     """
     이미지를 분할하여 추론하는 메인 함수
     """
@@ -121,13 +122,16 @@ def main_with_split_inference():
             
             # 이미지가 충분히 큰 경우에만 분할 추론 적용
             pred = infer_split_image(image, processor, model, device)
-            
             # GT 마스크 전처리
             gt = label_to_train_id(gt_mask)
             
             # 메트릭 계산
             metrics = compute_metrics([pred, gt], matrix, num_classes)
             miou_metrics_list.append(metrics["mean_iou"])
+
+            # 레이블 매핑이 모델의 출력 클래스와 일치하는지 확인
+            print(f"예측된 클래스 분포: {np.unique(pred, return_counts=True)}")
+            print(f"GT 클래스 분포: {np.unique(gt, return_counts=True)}")
             # print(metrics["mean_iou"])
     
     # 평균 mIoU 계산
@@ -147,4 +151,4 @@ def main_with_split_inference():
 
 # 분할 추론 실행
 if __name__ == "__main__":
-    main_with_split_inference()
+    main()

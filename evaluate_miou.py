@@ -10,6 +10,8 @@ import evaluate
 import json
 import os
 import sys
+import pandas as pd
+import csv
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.append(project_root)
 from utils import label_to_train_id, save_results, compute_metrics
@@ -17,13 +19,10 @@ from utils import label_to_train_id, save_results, compute_metrics
 Config = {
     "model_name": "nvidia/segformer-b0-finetuned-cityscapes-1024-1024",
     "mode": "bilinear",
-    "DataSize": 500,
+    "DataSize": 100,
     "batch_size": 10
 }
 
-# Attacker 모듈 경로 추가
-sys.path.append('/workspace')
-from Attacker.clean import Clean
 
 def convert_to_train_id(label_array):
     """
@@ -112,7 +111,7 @@ if __name__ == "__main__":
     # Cityscapes 데이터셋 (fine annotation) 사용
     dataset = Cityscapes(root="./DataSet/cityscapes/", split="val", mode="fine", target_type="semantic")
     DataSize = Config["DataSize"]
-    selected_indices = list(random.sample(range(len(dataset)), DataSize))
+    selected_indices = list(range(DataSize))
     batch_size = Config["batch_size"]
 
     model_name = Config["model_name"]
@@ -146,6 +145,18 @@ if __name__ == "__main__":
             gt = np.array(gt_mask) if isinstance(gt_mask, Image.Image) else np.array(gt_mask)
             gt = convert_to_train_id(gt)
 
+            # 클래스별 픽셀 수 계산 (GT 기준)
+            pixel_counts = {}
+            for class_idx in range(num_classes):
+                pixel_count = np.sum(gt == class_idx)
+                pixel_counts[str(class_idx)] = int(pixel_count)
+            
+            # 예측에서의 클래스별 픽셀 수 계산
+            pred_pixel_counts = {}
+            for class_idx in range(num_classes):
+                pred_pixel_count = np.sum(pred == class_idx)
+                pred_pixel_counts[str(class_idx)] = int(pred_pixel_count)
+
             metrics = compute_metrics([pred, gt], matrix, num_classes)
             miou_metrics_list.append(metrics)
             
@@ -159,18 +170,26 @@ if __name__ == "__main__":
             if isinstance(class_ious, np.ndarray):
                 for class_idx, iou in enumerate(class_ious):
                     image_class_ious[str(class_idx)] = float(iou)
-                    print(f"  클래스 {class_idx}: {iou:.4f}")
+                    # 각 클래스별 픽셀 수와 함께 출력
+                    gt_count = pixel_counts.get(str(class_idx), 0)
+                    pred_count = pred_pixel_counts.get(str(class_idx), 0)
+                    print(f"  클래스 {class_idx}: IoU={iou:.4f}, GT 픽셀 수={gt_count}, 예측 픽셀 수={pred_count}")
             # 딕셔너리인 경우
             elif isinstance(class_ious, dict):
                 for class_idx, iou in class_ious.items():
                     image_class_ious[str(class_idx)] = float(iou)
-                    print(f"  클래스 {class_idx}: {iou:.4f}")
+                    # 각 클래스별 픽셀 수와 함께 출력
+                    gt_count = pixel_counts.get(str(class_idx), 0)
+                    pred_count = pred_pixel_counts.get(str(class_idx), 0)
+                    print(f"  클래스 {class_idx}: IoU={iou:.4f}, GT 픽셀 수={gt_count}, 예측 픽셀 수={pred_count}")
             
             # 이미지 인덱스와 함께 저장
             class_ious_list.append({
                 "image_idx": idx,
                 "class_ious": image_class_ious,
-                "mean_iou": float(metrics["mean_iou"])
+                "mean_iou": float(metrics["mean_iou"]),
+                "gt_pixel_counts": pixel_counts,
+                "pred_pixel_counts": pred_pixel_counts
             })
             
             print(f"  mIoU: {metrics['mean_iou']:.4f}")
@@ -182,37 +201,84 @@ if __name__ == "__main__":
     mIoU = np.nanmean(mean_iou_values)
     print("전체 mIoU:", mIoU)
     
-    # 전체 데이터셋의 클래스별 평균 IoU 계산 및 출력
+    # 전체 데이터셋의 클래스별 평균 IoU 및 픽셀 수 계산 및 출력
     avg_class_ious = {}
+    total_gt_pixel_counts = {}
+    total_pred_pixel_counts = {}
+    
     for class_idx in range(num_classes):
         # 수정된 class_ious_list 구조에 맞게 변경
         class_ious = [img_data["class_ious"].get(str(class_idx), 0) 
-                     for img_data in class_ious_list 
-                     if str(class_idx) in img_data["class_ious"]]
+                    for img_data in class_ious_list 
+                    if str(class_idx) in img_data["class_ious"]]
+        
+        # 각 클래스별 전체 픽셀 수 합산
+        total_gt_pixels = sum([img_data["gt_pixel_counts"].get(str(class_idx), 0) 
+                            for img_data in class_ious_list])
+        total_pred_pixels = sum([img_data["pred_pixel_counts"].get(str(class_idx), 0) 
+                                for img_data in class_ious_list])
+        
         if class_ious:
             avg_class_ious[str(class_idx)] = float(np.nanmean(class_ious))
+            total_gt_pixel_counts[str(class_idx)] = int(total_gt_pixels)
+            total_pred_pixel_counts[str(class_idx)] = int(total_pred_pixels)
     
-    print("\n전체 데이터셋의 클래스별 평균 IoU:")
+    print("\n전체 데이터셋의 클래스별 평균 IoU 및 픽셀 수:")
     for class_idx, avg_iou in avg_class_ious.items():
-        print(f"  클래스 {class_idx}: {avg_iou:.4f}")
+        gt_total = total_gt_pixel_counts.get(class_idx, 0)
+        pred_total = total_pred_pixel_counts.get(class_idx, 0)
+        print(f"  클래스 {class_idx}: 평균 IoU={avg_iou:.4f}, GT 총 픽셀 수={gt_total}, 예측 총 픽셀 수={pred_total}")
 
-    # 모델 이름, 모드, mIoU 값 저장
-    results = {
-        "model_name": model_name,
-        "mode": mode,
-        "mIoU": float(mIoU),  # JSON 직렬화를 위해 numpy 타입을 파이썬 float로 변환
-        "dataSize": DataSize,
-        "miou_list": [float(m) for m in mean_iou_values],
-        "mean_accuracy": float(np.nanmean(accuracy_values)),
-        "class_ious": avg_class_ious,  # 전체 클래스별 평균 IoU 저장
-        "per_image_class_ious": class_ious_list  # 각 이미지별 클래스별 IoU 저장
-    }
-    
-    results_file = "class_miou.json"
-    save_results(results, results_file)
-    print("결과가 'class_miou.json' 파일에 추가 저장되었습니다.")
-    
-    # 각 이미지별 클래스별 IoU를 별도 파일로도 저장
-    with open("per_image_class_ious.json", "w") as f:
-        json.dump(class_ious_list, f, indent=2)
-    print("각 이미지별 클래스별 IoU가 'per_image_class_ious.json' 파일에 저장되었습니다.")
+    # 이미지별 클래스별 IoU를 CSV로 저장
+    def save_to_csv(class_ious_list, num_classes, filename='segmentation_results.csv'):
+        # 헤더 행 생성 
+        headers = ['image_idx', 'mean_iou']
+        for c in range(num_classes):
+            headers.extend([f'class_{c}_iou', f'class_{c}_gt_pixels', f'class_{c}_pred_pixels'])
+        
+        with open(filename, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            
+            # 각 이미지별 데이터 행 작성
+            for data in class_ious_list:
+                img_idx = data["image_idx"]
+                row = [img_idx, data["mean_iou"]]
+                
+                for class_idx in range(num_classes):
+                    class_key = str(class_idx)
+                    iou = data["class_ious"].get(class_key, 0)
+                    gt_pixels = data["gt_pixel_counts"].get(class_key, 0)
+                    pred_pixels = data["pred_pixel_counts"].get(class_key, 0)
+                    row.extend([iou, gt_pixels, pred_pixels])
+                
+                writer.writerow(row)
+        
+        # 클래스별 통계 CSV 생성 (더 간단한 형태)
+        class_stats = []
+        for class_idx in range(num_classes):
+            class_key = str(class_idx)
+            # 클래스별 평균 IoU 계산
+            ious = [img_data["class_ious"].get(class_key, 0) 
+                    for img_data in class_ious_list 
+                    if class_key in img_data["class_ious"]]
+            
+            avg_iou = np.nanmean(ious) if ious else 0
+            
+            # 클래스별 총 픽셀 수 합산
+            total_gt = sum(img_data["gt_pixel_counts"].get(class_key, 0) 
+                            for img_data in class_ious_list)
+            total_pred = sum(img_data["pred_pixel_counts"].get(class_key, 0) 
+                              for img_data in class_ious_list)
+            
+            class_stats.append([class_idx, avg_iou, total_gt, total_pred])
+        
+        with open('class_summary.csv', 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['class_idx', 'avg_iou', 'total_gt_pixels', 'total_pred_pixels'])
+            writer.writerows(class_stats)
+        
+        print(f"결과가 '{filename}'와 'class_summary.csv' 파일로 저장되었습니다.")
+
+    # 함수 호출 
+    save_to_csv(class_ious_list, num_classes)

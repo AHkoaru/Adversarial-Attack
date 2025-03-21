@@ -49,7 +49,7 @@ def compute_metrics(eval_pred, metric, num_labels):
         references=labels,
         num_labels=num_labels,
         ignore_index=255,
-        reduce_labels=False,
+        reduce_labels=True,
     )
     return metrics
 

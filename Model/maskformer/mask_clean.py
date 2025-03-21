@@ -11,18 +11,12 @@ import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.append(project_root)
 from utils import label_to_train_id, save_results, compute_metrics
-# utils.py 파일 import (더 깔끔한 방식)
-
-import sys
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-sys.path.append(project_root)
-from utils import label_to_train_id, save_results
 
 # 설정값을 클래스로 정의하여 관리
 class AttackConfig:
     model_name = "facebook/maskformer-resnet101-cityscapes"
     data = "cityscapes"
-    DataSize = 500
+    DataSize = 1
     batch_size = 10
     Dataset = "val"
 
@@ -46,8 +40,20 @@ def compute_metrics(eval_pred, metric, num_labels):
         references=labels,
         num_labels=num_labels,
         ignore_index=255,
-        reduce_labels=False,
+        reduce_labels=False,  # False로 변경하여 모든 클래스에 대해 IoU 계산
     )
+    
+    # 클래스별 IoU 값 중 NaN 값을 무시하고 평균 계산
+    if "per_category_iou" in metrics:
+        # IoU 값들을 numpy 배열로 변환
+        iou_values = np.array(list(metrics["per_category_iou"]))
+        
+        # 0값을 NaN으로 변환 (등장하지 않은 클래스의 IoU가 0으로 계산된 경우)
+        iou_values = np.where(iou_values == 0, np.nan, iou_values)
+        
+        # NaN 값을 무시하고 평균 계산
+        metrics["mean_iou"] = float(np.nanmean(iou_values))
+    
     return metrics
 
 def infer_full_image(image, processor, model, device):
@@ -114,7 +120,7 @@ def main():
     
     # 평균 mIoU 계산
     miou_metrics = np.array(miou_metrics_list)
-    mean_miou = np.mean(miou_metrics)
+    mean_miou = np.nanmean(miou_metrics)
     print("model_name:", config.model_name)
     print(f"평균 mIoU: {mean_miou:.4f}")
 

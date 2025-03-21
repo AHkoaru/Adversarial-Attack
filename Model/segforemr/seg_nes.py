@@ -20,7 +20,7 @@ class AttackConfig:
     dataSize: int = 1
     batch_size: int = 10
     Data = "cityscapes"
-    model_name: str = "nvidia/segformer-b0-finetuned-cityscapes-1024-1024"
+    model_name: str = "nvidia/segformer-b5-finetuned-cityscapes-1024-1024"
 
 def sliding_window_inference(image, gt_mask, feature_extractor, model, mode, device, tile_size=(1024, 1024), stride=(512, 512)):
     """

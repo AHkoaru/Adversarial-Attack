@@ -2,3 +2,6 @@ transformers
 scipy
 evaluate
 scikit-learn
+h5py
+matplotlib
+seaborn
