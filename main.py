@@ -25,14 +25,6 @@ setproctitle.setproctitle("Pixle_Attack_Cityscapes_Process")
 # config_path = './configs/segformer/segformer_mit-b5_8xb1-160k_cityscapes-1024x1024.py'
 # checkpoint_path = 'ckpt/segformer_mit-b5_8x1_1024x1024_160k_cityscapes_20211206_072934-87a052ec.pth'
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--config", type=str)
-parser.add_argument("--device", type=str, default="cuda:0")
-parser.add_argument("--attack_pixel", type=float, default=0.01, help="Ratio of adversarial pixels to total image pixels.") # 새 pixel_ratio 인자 추가
-args = parser.parse_args()
-
-device = args.device
-attack_pixel_arg = args.attack_pixel # 새 인자 사용
 
 def load_config(config_path):
     """
@@ -44,7 +36,7 @@ def load_config(config_path):
     spec.loader.exec_module(config_module)
     return config_module.config
 
-def main():
+def main(config):
     model_configs = {
         "cityscapes": {
             "mask2former": {
@@ -68,15 +60,13 @@ def main():
         }
     }
 
-
+    device = config["device"]
 
     #configs_attack/ade20k/config_mask2_swin_B.py
     #configs_attack/ade20k/config_seg.py
 
     #configs_attack/cityscapes/config_mask2_swin_B.py
     #configs_attack/cityscapes/config_seg.py
-    cf_path = args.config
-    config = load_config(cf_path)
 
     # Initialize model
     if config["dataset"] not in model_configs:
@@ -85,8 +75,6 @@ def main():
         raise ValueError(f"Unsupported model: {config['model']} for dataset {config['dataset']}")
 
     model_cfg = model_configs[config["dataset"]][config["model"]]
-
-    output_dir = './results'
 
     # Load dataset
     if config["dataset"] == "cityscapes":
@@ -169,7 +157,7 @@ def main():
 
         # Calculate the number of pixels per patch
         _, _, H, W = img_tensor.shape
-        total_target_pixels_overall = H * W * attack_pixel_arg
+        total_target_pixels_overall = H * W * config["attack_pixel"]
         pixels_per_single_patch_target = total_target_pixels_overall / 250
 
         # === 패치 크기 계산 로직 ===
@@ -341,4 +329,16 @@ def main():
     print("-" * 20)
     print(f"Experiment results saved in: {base_dir}")
 
-if 
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, required=True, help="Path to the config file.")
+    parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--attack_pixel", type=float, required=True, help="Ratio of adversarial pixels to total image pixels.") # 새 pixel_ratio 인자 추가
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+    
+    config["device"] = args.device
+    config["attack_pixel"] = args.attack_pixel
+
+    main(config)
