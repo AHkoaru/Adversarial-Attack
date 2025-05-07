@@ -1,3 +1,8 @@
-python tools/test.py \
-configs/segformer/segformer_mit-b0_8xb1-160k_cityscapes-1024x1024.py \
-/mmsegmentation/checkpoint/segformer_mit-b0_8x1_1024x1024_160k_cityscapes_20211208_101857-e7f88502.pth
+#configs_attack/ade20k/config_mask2_swin_B.py
+#configs_attack/ade20k/config_seg.py
+
+#configs_attack/cityscapes/config_mask2_swin_B.py
+#configs_attack/cityscapes/config_seg.py
+
+
+python main.py --device cuda:0 --attack_pixel 0.01 --config configs_attack/ade20k/config_seg.py
