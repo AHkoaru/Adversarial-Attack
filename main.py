@@ -135,7 +135,7 @@ def main(config):
 
         img_tensor = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(device) # Ensure float and on GPU
         gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(device) # Ensure long and on GPU
-        print(img_tensor.shape)
+        # print(img_tensor.shape)
 
 
         # --- Separate directory and filename from the original filename ---
@@ -306,8 +306,8 @@ def main(config):
         "elapsed_time": (datetime.datetime.now() - start_time).total_seconds(),
         "init_benign_to_adv_miou": init_benign_to_adv_miou['mean_iou'],
         "init_gt_to_adv_miou": init_gt_to_adv_miou['mean_iou'],
-        "benign_to_adv_miou_results": benign_to_adv_mious,
-        "gt_to_adv_miou_results": gt_to_adv_mious,
+        "benign_to_adv_miou_results": benign_to_adv_miou['mean_iou'],
+        "gt_to_adv_miou_results": gt_to_adv_miou['mean_iou'],
         "mean_query_results": mean_query,
         "mean_l0_results": mean_l0,
         "mean_ratio_results": mean_ratio,
