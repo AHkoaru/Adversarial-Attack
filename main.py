@@ -104,7 +104,7 @@ def main(config):
 
     model = init_model(model_cfg["config"], None, device)
     # 2. 체크포인트 로드 (weights_only=False 직접 설정)
-    checkpoint = torch.load(model_cfg["checkpoint"], map_location=device)
+    checkpoint = torch.load(model_cfg["checkpoint"], map_location=device, weights_only=False)
     model.load_state_dict(checkpoint['state_dict'])
 
     del checkpoint  # 체크포인트 변수 삭제
