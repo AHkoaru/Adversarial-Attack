@@ -1,0 +1,6 @@
+opencv-python-headless
+setproctitle
+scipy
+ftfy
+regex
+evaluate
