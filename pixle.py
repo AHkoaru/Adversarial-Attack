@@ -50,7 +50,8 @@ class Pixle():
         max_iterations=20,
         update_each_iteration=False,
         threshold=2250,
-        device=None
+        device=None,
+        cfg = None
     ):
         self.model = model
         self.device = device
@@ -68,7 +69,7 @@ class Pixle():
 
         self.threshold = threshold
         self.save_interval = restarts // 5
-
+        self.cfg = cfg
         if self.pixel_mapping not in [
             "random",
             "similarity",
@@ -446,6 +447,7 @@ class Pixle():
         """
         # --- Calculate initial state ---
         original_img = img.squeeze(0) # Shape: (C, H, W)
+        gt = gt.squeeze(0) # Shape: (H, W)
         with torch.no_grad():
             # 1. Get original logits and predictions
             try:
@@ -464,19 +466,28 @@ class Pixle():
 
             # 예측이 맞은 픽셀만 선택
             condition_mask = torch.ones_like(original_pred_labels, dtype=torch.bool)
-            correct_pred_mask = torch.where(condition_mask, original_pred_labels, ignore_index)
+
+            #gt를 사용해 배경 제거
+            if self.cfg['dataset'] == 'cityscapes':
+                # Cityscapes: gt에서 255인 픽셀 무시
+                valid_gt_mask = gt != 255
+            elif self.cfg['dataset'] == 'ade20k':
+                # ADE20k: gt에서 0번 클래스인 픽셀 무시
+                valid_gt_mask = gt != 0
+
+            correct_masked_pred_labels = torch.where(valid_gt_mask, original_pred_labels, ignore_index)
 
             #마스크를 (C, H, W) 형태로 변환
             channel_indices_reshaped = channel_indices.view(num_classes, 1, 1)
-            channel_indices_reshaped = channel_indices_reshaped.to(correct_pred_mask.device)
-            final_mask = channel_indices_reshaped == correct_pred_mask
+            channel_indices_reshaped = channel_indices_reshaped.to(correct_masked_pred_labels.device)
+            final_mask = channel_indices_reshaped == correct_masked_pred_labels #broadcast
 
             # 3. Calculate initial loss based on probability of TRUE class at matched locations
             # original_probs (C, H, W) 에서 final_mask (C, H, W)가 True인 위치의 값만 선택
-            selected_initial_logits = original_probs[final_mask] # 1D Tensor of selected logits
+            selected_initial_probs = original_probs[final_mask] # 1D Tensor of selected logits
 
-            # 선택된 확률률 값들의 평균을 계산
-            initial_loss_val = torch.mean(selected_initial_logits)
+            # 선택된 확률 값들의 평균을 계산
+            initial_loss_val = torch.mean(selected_initial_probs)
 
         @torch.no_grad()
         def func(solution=None, destination=None, solution_as_perturbed=False, pert_image_tensor=None, **kwargs):
@@ -496,7 +507,6 @@ class Pixle():
 
             adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
  
-            
             adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
             adv_probs = softmax(adv_logits, dim=0) # Shape: (C, H, W)
             
@@ -506,7 +516,7 @@ class Pixle():
 
             # Return loss as numpy float. Lower value means the attack is more successful.
             return loss_val.detach().cpu().numpy()
-
+        
 
         @torch.no_grad()
         def callback(pert_image_tensor=None, l0_threshold_captured=None, **kwargs): # Simplified signature
@@ -572,8 +582,9 @@ if __name__ == "__main__":
               "data_dir": "./datasets/ade20k"}
     
     cf_path = 'configs/mask2former/mask2former_swin-b-in22k-384x384-pre_8xb2-160k_ade20k-640x640.py'
-    ckpt_path = 'checkpoint/mask2former_swin-b-in22k-384x384-pre_8xb2-160k_ade20k-640x640_20221203_235230-7ec0f569.pth'
+    ckpt_path = 'ckpt/mask2former_swin-b-in22k-384x384-pre_8xb2-160k_ade20k-640x640_20221203_235230-7ec0f569.pth'
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     num_samples = 1
     dataset = ADESet(dataset_dir=config["data_dir"])
     dataset.images = dataset.images[:min(len(dataset.images), num_samples)]
@@ -606,11 +617,11 @@ if __name__ == "__main__":
                       x_dimensions=(0.006, 0.006),
                       y_dimensions=(0.006, 0.006),
                       pixel_mapping="random",
-                      restarts=250,
-                      max_iterations=20,
+                      restarts=5,
+                      max_iterations=1,
                       update_each_iteration=False,
-                      save_interval=50,
-                      threshold=21000)
+                      threshold=21000,
+                      cfg = config)
 
         results = pixle.forward(img_tensor, gt_tensor)
         results_adv_images = [x.squeeze(0).permute(1, 2, 0).cpu().numpy() for x in results['adv_images']]

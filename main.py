@@ -178,8 +178,9 @@ def main(config):
             y_dimensions=(patch_h_pixels, patch_h_pixels), 
             restarts=250,
             max_iterations=20,
-            threshold=22000,
-            device=device
+            threshold=21000,
+            device=device,
+            cfg = config
         )
 
         # Ensure input tensor is on the correct device and potentially float
