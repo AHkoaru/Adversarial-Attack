@@ -17,7 +17,7 @@ from utils import save_experiment_results
 
 import argparse
 import setproctitle
-setproctitle.setproctitle("Pixle_Attack_Cityscapes_Process")
+
 # 필요한 글로벌 객체 허용
 # torch.serialization.add_safe_globals([HistoryBuffer])
 # torch.serialization.add_safe_globals([np.core.multiarray._reconstruct])
@@ -92,6 +92,7 @@ def main(config):
 
     model_cfg = model_configs[config["dataset"]][config["model"]]
 
+    setproctitle.setproctitle(f"Pixle_Attack_{config['dataset']}_{config['model']}_{config['attack_pixel']}_Process")
     # Load dataset
     if config["dataset"] == "cityscapes":
         dataset = CitySet(dataset_dir=config["data_dir"])
@@ -99,6 +100,7 @@ def main(config):
         dataset = ADESet(dataset_dir=config["data_dir"])
     else:
         raise ValueError(f"Unsupported dataset: {config['dataset']}")
+
 
     # num_images = 5
 
