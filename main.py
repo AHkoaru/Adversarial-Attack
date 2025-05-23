@@ -125,11 +125,19 @@ def main(config):
     # dataset.images = dataset.images[:min(len(dataset.images), num_images)]
     # dataset.filenames = dataset.filenames[:min(len(dataset.filenames), num_images)]
     # dataset.gt_images = dataset.gt_images[:min(len(dataset.gt_images), num_images)]
-
-    model = init_model(model_cfg["config"], None, device)
-    # 2. 체크포인트 로드 (weights_only=False 직접 설정)
-    checkpoint = torch.load(model_cfg["checkpoint"], map_location=device, weights_only=False)
-    model.load_state_dict(checkpoint['state_dict'], strict=False)
+    if config["model"] == "setr":
+        model = init_model(model_cfg["config"], None, 'cuda')
+        checkpoint = torch.load(model_cfg["checkpoint"], map_location='cuda', weights_only=False)
+        # 모델의 projection 레이어에 bias 추가
+        model.backbone.patch_embed.projection.bias = torch.nn.Parameter(
+            torch.zeros(checkpoint["state_dict"]["backbone.patch_embed.projection.weight"].shape[0], device='cuda')
+        )
+        model.load_state_dict(checkpoint['state_dict'])
+    else:
+        model = init_model(model_cfg["config"], None, device)
+        # 2. 체크포인트 로드 (weights_only=False 직접 설정)
+        checkpoint = torch.load(model_cfg["checkpoint"], map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint['state_dict'])
 
     del checkpoint  # 체크포인트 변수 삭제
     torch.cuda.empty_cache()  # GPU 캐시 정리
@@ -175,6 +183,7 @@ def main(config):
         # Create the full directory path including the original subdirectory
         ori_seg_dir = os.path.join(base_dir, "ori_seg", original_dir)
         os.makedirs(ori_seg_dir, exist_ok=True) # Create the directory if it doesn't exist
+        img = img_bgr[:, :, ::-1]
         visualize_segmentation(img, ori_result.pred_sem_seg.data.squeeze().cpu().numpy(),
                             # Save using the original basename in the created directory
                             save_path=os.path.join(ori_seg_dir, original_basename))
