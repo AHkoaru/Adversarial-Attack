@@ -54,6 +54,10 @@ def main(config):
             "pspnet": {
                 "config": 'configs/pspnet/pspnet_r101-d8_4xb2-80k_cityscapes-512x1024.py',
                 "checkpoint": 'ckpt/pspnet_r101-d8_512x1024_80k_cityscapes_20200606_112211-e1e1100f.pth'
+            },
+            "setr": {
+                "config": 'configs/setr/setr_vit-l_pup_8xb1-80k_cityscapes-768x768.py',
+                "checkpoint": 'ckpt/setr_pup_vit-large_8x1_768x768_80k_cityscapes_20211122_155115-f6f37b8f.pth'
             }
         },
         "ade20k": {
@@ -72,6 +76,10 @@ def main(config):
             "pspnet": {
                 "config": 'configs/pspnet/pspnet_r101-d8_4xb4-160k_ade20k-512x512.py',
                 "checkpoint": 'ckpt/pspnet_r101-d8_512x512_160k_ade20k_20200615_100650-967c316f.pth'
+            },
+            "setr": {
+                "config": 'configs/setr/setr_vit-l_pup_8xb2-160k_ade20k-512x512.py',
+                "checkpoint": 'ckpt/setr_pup_512x512_160k_b16_ade20k_20210619_191343-7e0ce826.pth'
             }
         }
     }
@@ -92,7 +100,6 @@ def main(config):
 
     model_cfg = model_configs[config["dataset"]][config["model"]]
 
-    setproctitle.setproctitle(f"Pixle_Attack_{config['dataset']}_{config['model']}_{config['attack_pixel']}_Process")
     # Load dataset
     if config["dataset"] == "cityscapes":
         dataset = CitySet(dataset_dir=config["data_dir"])
@@ -100,8 +107,7 @@ def main(config):
         dataset = ADESet(dataset_dir=config["data_dir"])
     else:
         raise ValueError(f"Unsupported dataset: {config['dataset']}")
-
-
+    setproctitle.setproctitle(f"Pixle_Attack_{config['dataset']}_{config['model']}_{config['attack_pixel']}_Process")
     # num_images = 5
 
     # # 데이터셋 전체를 랜덤하게 섞기 위한 인덱스 생성 및 셔플
