@@ -161,10 +161,8 @@ def main(config):
     base_dir = os.path.join(config["base_dir"], start_timestamp)
     os.makedirs(base_dir, exist_ok=True)
 
-    for i, (img, filename, gt) in tqdm(enumerate(dataset), desc="Generating adversarial examples"):
+    for i, (img_bgr, filename, gt) in tqdm(enumerate(dataset), desc="Generating adversarial examples"):
         setproctitle.setproctitle(f"Pixle_Attack_{config['dataset']}_{config['model']}_{config['attack_pixel']}_({i+1}/100)_Process")
-        # Convert to BGR for model inference if needed, keep original RGB for saving/display
-        img_bgr = img[:, :, ::-1].copy()
 
         img_tensor = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(device) # Ensure float and on GPU
         gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(device) # Ensure long and on GPU
