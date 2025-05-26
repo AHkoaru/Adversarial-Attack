@@ -224,7 +224,7 @@ def main(config):
         example_query = results['query']
 
         # Store necessary data for final evaluation
-        img_list.append(img) # Store original RGB image
+        img_list.append(img_bgr) # Store original RGB image
         gt_list.append(gt)
         filename_list.append(filename) # Store the original full filename maybe for reference
         for i in range(5):
