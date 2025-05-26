@@ -10,4 +10,7 @@
 #configs_attack/cityscapes/config_deeplabv3.py
 #configs_attack/cityscapes/config_setr.py
 
-python test.py --device cuda:0 --attack_pixel 0.05 --config configs_attack/ade20k/config_ster.py
+python main.py \
+    --device cuda:0 \
+    --attack_pixel 0.05 \
+    --config configs_attack/ade20k/config_setr.py
