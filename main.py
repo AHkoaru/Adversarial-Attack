@@ -224,11 +224,11 @@ def main(config):
         example_query = results['query']
 
         # Store necessary data for final evaluation
-        img_list.append(img_bgr) # Store original RGB image
+        img_list.append(img_bgr) # Store original BGR image
         gt_list.append(gt)
         filename_list.append(filename) # Store the original full filename maybe for reference
         for i in range(5):
-            adv_img_lists[i].append(adv_examples_rgb_numpy[i]) # Store RGB adv image
+            adv_img_lists[i].append(adv_examples_bgr_numpy[i]) # Store BGR adv image
             adv_query_lists[i].append(example_query[i])
         # --- Loop for saving iteration-specific results and calculating metrics ---
         for i in range(5):
