@@ -1,4 +1,5 @@
 config = {
+    "attack_method": "Pixel",
     "task": "segmentation",
     "dataset": "ade20k",
     "data_dir": "datasets/ade20k",         # Directory path where the dataset is located

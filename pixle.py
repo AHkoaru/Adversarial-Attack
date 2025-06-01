@@ -7,7 +7,6 @@ from torch.nn.functional import softmax
 from mmseg.apis import inference_model
 
 from tqdm import tqdm
-from function import visualize_segmentation
 
 from function import *
 from evaluation import *

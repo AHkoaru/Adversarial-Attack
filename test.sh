@@ -14,3 +14,10 @@ python main.py \
     --device cuda:0 \
     --attack_pixel 0.05 \
     --config configs_attack/ade20k/config_setr.py
+
+python rs_eval.py \
+    --config configs_attack/ade20k/config_mask2_swin_B.py \
+    --device cuda:0 \
+    --eps 0.001 \
+    --num_images 50 \
+    --n_queries 5000
