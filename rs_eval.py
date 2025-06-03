@@ -151,7 +151,7 @@ def main(config):
     all_impact_metrics = [[] for _ in range(5)] 
 
     for i, (img_bgr, filename, gt) in tqdm(enumerate(dataset), desc="Running Sparse-RS Attack", total=len(dataset.images)):
-        setproctitle.setproctitle(f"SparseRS_Attack_{config['dataset']}_{config['model']}_({i+1}/{len(dataset.images)})")
+        setproctitle.setproctitle(f"SparseRS_Attack_{config['dataset']}_{config['model']}_{config['attack_pixel']}({i+1}/{len(dataset.images)})")
 
         img_tensor_bgr = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(config["device"])
         gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(config["device"])
@@ -187,7 +187,7 @@ def main(config):
         current_img_save_dir = os.path.join(base_dir, os.path.splitext(os.path.basename(filename))[0])
         os.makedirs(current_img_save_dir, exist_ok=True)
 
-        Image.fromarray(img_bgr[:, :, ::-1]).save(os.path.join(current_img_save_dir, "original.png"))
+        Image.fromarray(img_bgr[:, :, ::-1]).save(os.path.join(base_dir, "original.png"))
 
         for i, adv_img_bgr in enumerate(adv_img_bgr_list):
             query_img_save_dir = os.path.join(current_img_save_dir, f"{i+1}000query")

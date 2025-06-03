@@ -16,8 +16,8 @@ python main.py \
     --config configs_attack/ade20k/config_setr.py
 
 python rs_eval.py \
-    --config configs_attack/ade20k/config_mask2_swin_B.py \
+    --config configs_attack/ade20k/config_pspnet.py \
     --device cuda:0 \
-    --eps 0.001 \
-    --num_images 50 \
-    --n_queries 5000
+    --eps 0.05 \
+    --n_queries 5000 \
+    # --num_images 2
