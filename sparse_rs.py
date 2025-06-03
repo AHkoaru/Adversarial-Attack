@@ -283,10 +283,11 @@ class RSAttack():
                     be_all[img_idx] = ind_np.clone()
                     
                 loss_min = self.margin_and_loss(x_best, final_mask)
-                n_queries = torch.ones(img.shape[0]).to(self.device)
+                n_queries = 1
 
                 # pbar = tqdm(range(1, self.n_queries), desc="Sparse-RS Attack", ncols=120)
                 # for it in pbar:
+                x_best_list = []
                 for it in range(1, self.n_queries):
                     # build new candidate
                     x_new = x_best.clone()
@@ -335,6 +336,9 @@ class RSAttack():
                             
                             b_all[img_idx] = temp_b
                             be_all[img_idx] = temp_be
+
+                    if (n_queries+1) % (self.n_queries // 5) == 0:
+                        x_best_list.append(x_best)
 
                     # # 진행률 바에 현재 상태 정보 표시
                     # postfix_dict = {
@@ -863,7 +867,7 @@ class RSAttack():
                 x_best[:, :, ind[:, 0], ind[:, 1]] = 0.
                 x_best[:, :, ind[:, 0], ind[:, 1]] += frame_univ
         
-        return n_queries, x_best
+        return n_queries, x_best_list
 
     def perturb(self, img, gt):
         """

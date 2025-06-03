@@ -12,6 +12,7 @@ from sparse_rs import RSAttack # sparse-rs.py의 공격 클래스
 
 from function import *
 from evaluation import *
+from utils import save_experiment_results
 
 import argparse
 import setproctitle
@@ -27,7 +28,7 @@ def load_config(config_path):
     return config_module.config
 
 
-def main(args):
+def main(config):
     # 1. 공격 설정 로드 (main.py의 방식과 유사하게 argparse 또는 기본값 사용)
     # 예시: 공격 관련 설정은 main.py의 config 객체나 별도의 argparse로 관리
     # 여기서는 main.py의 config 로딩 방식을 차용하되, rs_eval 특화 설정을 추가할 수 있습니다.
@@ -137,15 +138,14 @@ def main(args):
     # 결과 저장을 위한 디렉토리 설정
     current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     experiment_name = f"{config['dataset']}_{config['model']}_sparse-rs_{current_time}"
-    save_dir_base = os.path.join(config["base_dir"], experiment_name)
-    os.makedirs(save_dir_base, exist_ok=True)
+    base_dir = os.path.join(config["base_dir"], current_time)
+    os.makedirs(base_dir, exist_ok=True)
     
     img_list = []
     gt_list = []
-    adv_img_list = []
     filename_list = []
-    # adv_img_lists = [[] for _ in range(5)]
-    adv_query_lists = [[] for _ in range(5)] 
+    adv_img_lists = [[] for _ in range(5)]
+    adv_query_lists = [[] for _ in range(5)]
     all_l0_metrics = [[] for _ in range(5)] 
     all_ratio_metrics = [[] for _ in range(5)] 
     all_impact_metrics = [[] for _ in range(5)] 
@@ -177,60 +177,80 @@ def main(args):
         )
         
 
-        query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
-        adv_img_bgr = adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-        # 적대적 이미지에 대한 추론 (main.py 참조)
-        adv_result = inference_model(model, adv_img_bgr)
-        adv_pred = adv_result.pred_sem_seg.data.squeeze().cpu().numpy()
-
-        delta_img = np.abs(img_bgr.astype(np.int16) - adv_img_bgr.astype(np.int16)).astype(np.uint8)
+        query, adv_img_bgr_list = attack.perturb(img_tensor_bgr, gt_tensor)
 
         img_list.append(img_bgr)
         gt_list.append(gt)
-        adv_img_list.append(adv_img_bgr)
-        # filename_list.append(filename)
-        # adv_query_lists[0].append(query)
-        # all_l0_metrics[0].append(l0_metric)
-        
-        current_img_save_dir = os.path.join(save_dir_base, os.path.splitext(os.path.basename(filename))[0])
+        for query_idx, adv_img_bgr in enumerate(adv_img_bgr_list):
+            adv_img_lists[query_idx].append(adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8))
+
+        current_img_save_dir = os.path.join(base_dir, os.path.splitext(os.path.basename(filename))[0])
         os.makedirs(current_img_save_dir, exist_ok=True)
 
-        Image.fromarray(img_bgr[:, :, ::-1]).save(os.path.join(current_img_save_dir, "original_image.png"))
-        Image.fromarray(adv_img_bgr[:, :, ::-1]).save(os.path.join(current_img_save_dir, f"adversarial_image_q{int(query)}.png"))
-        Image.fromarray(delta_img).save(os.path.join(current_img_save_dir, f"delta_image_q{int(query)}.png"))
-        # 시각화된 분할 마스크 저장 (main.py의 visualize_segmentation 사용)
-        # visualize_segmentation은 RGB 이미지를 기대하므로 BGR을 RGB로 변환
-        visualize_segmentation(img_bgr, ori_pred,
-                               save_path=os.path.join(current_img_save_dir, "original_segmentation.png"),
-                               alpha=0.5, dataset=config["dataset"]) # 데이터셋에 맞는 팔레트 사용
+        Image.fromarray(img_bgr[:, :, ::-1]).save(os.path.join(current_img_save_dir, "original.png"))
+
+        for i, adv_img_bgr in enumerate(adv_img_bgr_list):
+            query_img_save_dir = os.path.join(current_img_save_dir, f"{i+1}000query")
+            os.makedirs(query_img_save_dir, exist_ok=True)
+
+            adv_img_bgr = adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+            # 적대적 이미지에 대한 추론 (main.py 참조)
+            adv_result = inference_model(model, adv_img_bgr)
+            adv_pred = adv_result.pred_sem_seg.data.squeeze().cpu().numpy()
+            delta_img = np.abs(img_bgr.astype(np.int16) - adv_img_bgr.astype(np.int16)).astype(np.uint8)
         
-        visualize_segmentation(adv_img_bgr, adv_pred,
-                               save_path=os.path.join(current_img_save_dir, f"adversarial_segmentation_q{int(query)}.png"),
-                               alpha=0.5, dataset=config["dataset"]) 
+            Image.fromarray(adv_img_bgr[:, :, ::-1]).save(os.path.join(query_img_save_dir, "adv.jpg"))
+            Image.fromarray(delta_img).save(os.path.join(query_img_save_dir, "delta.jpg"))
+            # 시각화된 분할 마스크 저장 (main.py의 visualize_segmentation 사용)
+
+            visualize_segmentation(img_bgr, ori_pred,
+                                save_path=os.path.join(query_img_save_dir, "origin.jpg"),
+                                alpha=0.5, dataset=config["dataset"]) # 데이터셋에 맞는 팔레트 사용
+            
+            visualize_segmentation(adv_img_bgr, adv_pred,
+                                save_path=os.path.join(query_img_save_dir, "adv_seg.jpg"),
+                                alpha=0.5, dataset=config["dataset"])
         
-        l0_norm = calculate_l0_norm(img_bgr, adv_img_bgr)
-        pixel_ratio = calculate_pixel_ratio(img_bgr, adv_img_bgr)
-        impact = calculate_impact(img_bgr, adv_img_bgr, ori_pred, adv_pred)
+            l0_norm = calculate_l0_norm(img_bgr, adv_img_bgr)
+            pixel_ratio = calculate_pixel_ratio(img_bgr, adv_img_bgr)
+            impact = calculate_impact(img_bgr, adv_img_bgr, ori_pred, adv_pred)
 
-        print(f"L0 norm: {l0_norm}, Pixel ratio: {pixel_ratio}, Impact: {impact}")
+            all_l0_metrics[i].append(l0_norm)
+            all_ratio_metrics[i].append(pixel_ratio)
+            all_impact_metrics[i].append(impact)
 
-    benign_to_adv_miou, gt_to_adv_miou = eval_miou(model, img_list, adv_img_list, gt_list, config)
+    _, init_mious = eval_miou(model, img_list, img_list, gt_list, config)
+    benign_to_adv_mious = []
+    gt_to_adv_mious = []
+    mean_l0 = []
+    mean_ratio = []
+    mean_impact = []
+    for i in range(5):
+        benign_to_adv_miou, gt_to_adv_miou = eval_miou(model, img_list, adv_img_lists[i], gt_list, config)
+        benign_to_adv_mious.append(benign_to_adv_miou['mean_iou'].item())
+        gt_to_adv_mious.append(gt_to_adv_miou['mean_iou'].item())
 
-    summary_str = (
-        f"Experiment: {experiment_name}\n"
-        f"Dataset: {config['dataset']}, Model: {config['model']}\n"
-        f"Number of images: {len(dataset)}\n"
-        f"Average Adversarial mIoU (simple): {benign_to_adv_miou['mean_iou']:.4f}\n"
-        f"Average Adversarial Accuracy: {gt_to_adv_miou['mean_iou']:.4f}\n"
-    )
+        mean_l0.append(np.mean(all_l0_metrics[i]).item())
+        mean_ratio.append(np.mean(all_ratio_metrics[i]).item())
+        mean_impact.append(np.mean(all_impact_metrics[i]).item())
+
+    final_results = {
+        "Init mIoU" : init_mious['mean_iou'],
+        "Average Adversarial mIoU(benign)" : benign_to_adv_mious,
+        "Average Adversarial mIoU(gt)" : gt_to_adv_mious,
+        "Average L0": mean_l0,
+        "Average Ratio": mean_ratio,
+        "Average Impact": mean_impact
+    }
     print("\n--- Experiment Summary ---")
-    print(summary_str)
+    print(final_results)
     
-    with open(os.path.join(save_dir_base, "summary.txt"), "w") as f:
-        f.write(summary_str)
-        f.write("\n--- Individual Results ---\n")
-    print(f"Results saved to {save_dir_base}")
-
+    save_experiment_results(final_results,
+                            config,
+                            sweep_config=None, # Pass if needed
+                            timestamp=current_time,
+                            save_dir=base_dir # Save summary in the main run folder
+                            )
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run Sparse-RS attack evaluation.")
@@ -248,6 +268,7 @@ if __name__ == '__main__':
     config["device"] = args.device
     config["n_queries"] = args.n_queries
     config["eps"] = args.eps
+    config["attack_pixel"] = args.eps
     config["p_init"] = args.p_init
     config["n_restarts"] = args.n_restarts
     config["num_images"] = args.num_images
