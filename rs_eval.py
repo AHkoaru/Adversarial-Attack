@@ -187,7 +187,7 @@ def main(config):
         current_img_save_dir = os.path.join(base_dir, os.path.splitext(os.path.basename(filename))[0])
         os.makedirs(current_img_save_dir, exist_ok=True)
 
-        Image.fromarray(img_bgr[:, :, ::-1]).save(os.path.join(base_dir, "original.png"))
+        Image.fromarray(img_bgr[:, :, ::-1]).save(os.path.join(current_img_save_dir, "original.png"))
 
         for i, adv_img_bgr in enumerate(adv_img_bgr_list):
             query_img_save_dir = os.path.join(current_img_save_dir, f"{i+1}000query")
@@ -199,16 +199,16 @@ def main(config):
             adv_pred = adv_result.pred_sem_seg.data.squeeze().cpu().numpy()
             delta_img = np.abs(img_bgr.astype(np.int16) - adv_img_bgr.astype(np.int16)).astype(np.uint8)
         
-            Image.fromarray(adv_img_bgr[:, :, ::-1]).save(os.path.join(query_img_save_dir, "adv.jpg"))
-            Image.fromarray(delta_img).save(os.path.join(query_img_save_dir, "delta.jpg"))
+            Image.fromarray(adv_img_bgr[:, :, ::-1]).save(os.path.join(query_img_save_dir, "adv.png"))
+            Image.fromarray(delta_img).save(os.path.join(query_img_save_dir, "delta.png"))
             # 시각화된 분할 마스크 저장 (main.py의 visualize_segmentation 사용)
 
             visualize_segmentation(img_bgr, ori_pred,
-                                save_path=os.path.join(query_img_save_dir, "origin.jpg"),
+                                save_path=os.path.join(query_img_save_dir, "ori_seg.png"),
                                 alpha=0.5, dataset=config["dataset"]) # 데이터셋에 맞는 팔레트 사용
             
             visualize_segmentation(adv_img_bgr, adv_pred,
-                                save_path=os.path.join(query_img_save_dir, "adv_seg.jpg"),
+                                save_path=os.path.join(query_img_save_dir, "adv_seg.png"),
                                 alpha=0.5, dataset=config["dataset"])
         
             l0_norm = calculate_l0_norm(img_bgr, adv_img_bgr)
