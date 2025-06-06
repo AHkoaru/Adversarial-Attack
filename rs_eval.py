@@ -1,7 +1,9 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+
 import torch
 from tqdm import tqdm
 import datetime
-import os
 import importlib
 import numpy as np
 from PIL import Image
@@ -16,6 +18,8 @@ from utils import save_experiment_results
 
 import argparse
 import setproctitle
+
+
 
 def load_config(config_path):
     """
