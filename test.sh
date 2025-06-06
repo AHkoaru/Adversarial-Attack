@@ -10,14 +10,9 @@
 #configs_attack/cityscapes/config_deeplabv3.py
 #configs_attack/cityscapes/config_setr.py
 
-python main.py \
-    --device cuda:0 \
-    --attack_pixel 0.05 \
-    --config configs_attack/ade20k/config_setr.py
+export CUDA_VISIBLE_DEVICES=3 
 
 python rs_eval.py \
-    --config configs_attack/ade20k/config_pspnet.py \
-    --device cuda:0 \
-    --eps 0.05 \
-    --n_queries 5000 \
-    # --num_images 2
+    --config configs_attack/cityscapes/config_deeplabv3.py \
+    --eps 0.05 
+
