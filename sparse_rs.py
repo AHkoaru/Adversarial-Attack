@@ -867,7 +867,7 @@ class RSAttack():
                 x_best[:, :, ind[:, 0], ind[:, 1]] = 0.
                 x_best[:, :, ind[:, 0], ind[:, 1]] += frame_univ
         
-        return n_queries, x_best_list
+        return n_queries, x_best_list[4]
 
     def perturb(self, img, gt):
         """
