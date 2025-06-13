@@ -162,27 +162,33 @@ def main(config):
         ori_pred = ori_result.pred_sem_seg.data.squeeze().cpu().numpy()
 
         adv_img_bgr_list = []
-        for i in range(5):
-            attack = RSAttack(
-                model=model,
-                cfg=config, # Pass the simplified config for RSAttack internal use
-                norm='L0', # or 'patches'
-                n_queries=config["n_queries"],
-                eps=config["eps"], # For L0, this is number of pixels. For patches, it's area.
-                p_init=config["p_init"],
-                n_restarts=config["n_restarts"],
-                seed=0,
-                verbose=True,
-                targeted=False,
-                loss='segmentation_prob', # As used in the class
-                resc_schedule=True,
-                device=config["device"],
-                log_path=None # Disable logging for this simple test or provide a path
-            )
+        attack = RSAttack(
+            model=model,
+            cfg=config, # Pass the simplified config for RSAttack internal use
+            norm='L0', # or 'patches'
+            n_queries=config["n_queries"],
+            eps=config["eps"], # For L0, this is number of pixels. For patches, it's area.
+            p_init=config["p_init"],
+            n_restarts=config["n_restarts"],
+            seed=0,
+            verbose=True,
+            targeted=False,
+            loss='segmentation_prob', # As used in the class
+            resc_schedule=True,
+            device=config["device"],
+            log_path=None # Disable logging for this simple test or provide a path
+        )
             
-
+        for i in range(5):
             query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
             adv_img_bgr_list.append(adv_img_bgr)
+            img_tensor_bgr = adv_img_bgr
+
+            l0_norm = calculate_l0_norm(img_bgr, adv_img_bgr)
+            pixel_ratio = calculate_pixel_ratio(img_bgr, adv_img_bgr)
+
+            print(f"L0 norm: {l0_norm}, Pixel ratio: {pixel_ratio}")
+
         img_list.append(img_bgr)
         gt_list.append(gt)
         for query_idx, adv_img_bgr in enumerate(adv_img_bgr_list):
