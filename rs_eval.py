@@ -184,11 +184,6 @@ def main(config):
             adv_img_bgr_list.append(adv_img_bgr)
             img_tensor_bgr = adv_img_bgr
 
-            l0_norm = calculate_l0_norm(img_bgr, adv_img_bgr)
-            pixel_ratio = calculate_pixel_ratio(img_bgr, adv_img_bgr)
-
-            print(f"L0 norm: {l0_norm}, Pixel ratio: {pixel_ratio}")
-
         img_list.append(img_bgr)
         gt_list.append(gt)
         for query_idx, adv_img_bgr in enumerate(adv_img_bgr_list):
@@ -224,6 +219,8 @@ def main(config):
             l0_norm = calculate_l0_norm(img_bgr, adv_img_bgr)
             pixel_ratio = calculate_pixel_ratio(img_bgr, adv_img_bgr)
             impact = calculate_impact(img_bgr, adv_img_bgr, ori_pred, adv_pred)
+            print(f"file_name: {filename}")
+            print(f"L0 norm: {l0_norm}, Pixel ratio: {pixel_ratio}, Impact: {impact}")
 
             all_l0_metrics[i].append(l0_norm)
             all_ratio_metrics[i].append(pixel_ratio)
