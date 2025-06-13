@@ -153,7 +153,7 @@ def main(config):
     all_impact_metrics = [[] for _ in range(5)] 
 
     for i, (img_bgr, filename, gt) in tqdm(enumerate(dataset), desc="Running Sparse-RS Attack", total=len(dataset.images)):
-        setproctitle.setproctitle(f"SparseRS_Attack_{config['dataset']}_{config['model']}_{config['attack_pixel']}({i+1}/{len(dataset.images)})")
+        setproctitle.setproctitle(f"SparseRS_Attack_{config['dataset']}_{config['model']}_{config['attack_pixel']}({i}/{len(dataset.images)})")
 
         img_tensor_bgr = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(config["device"])
         gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(config["device"])
