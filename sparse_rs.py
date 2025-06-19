@@ -955,6 +955,7 @@ class RSAttack():
                 channel_indices_reshaped = channel_indices.view(num_classes, 1, 1)
                 channel_indices_reshaped = channel_indices_reshaped.to(correct_masked_pred_labels.device)
                 self.mask = channel_indices_reshaped == correct_masked_pred_labels #broadcast
+                print("make mask")
             
             # 3. Calculate initial loss based on probability of TRUE class at matched locations
             # original_probs (C, H, W) 에서 final_mask (C, H, W)가 True인 위치의 값만 선택
