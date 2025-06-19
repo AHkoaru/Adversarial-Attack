@@ -869,44 +869,6 @@ class RSAttack():
                 x_best[:, :, ind[:, 0], ind[:, 1]] += frame_univ
         
         return n_queries, x_best_list[4]
-    def get_init_mask(self, img, gt):
-        original_img = img.squeeze(0) # Shape: (C, H, W)
-        gt = gt.squeeze(0) # Shape: (H, W)
-        with torch.no_grad():
-            # 1. Get original logits and predictions
-            try:
-                original_result = inference_model(self.model, original_img.permute(1, 2, 0).cpu().numpy()) # Pass Tensor
-            except Exception as e:
-                print("\n--- Error calling inference_model (Original Image) ---")
-                raise e
-            original_logits = original_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
-            original_probs = softmax(original_logits, dim=0) # Shape: (C, H, W)
-            original_pred_labels = original_result.pred_sem_seg.data.squeeze() # Shape: (H, W)
-
-            # 2. Create masks
-            ignore_index = 255
-            num_classes = original_logits.shape[0]
-            channel_indices = torch.arange(num_classes, device=self.device) # Shape: (C)
-
-            # 예측이 맞은 픽셀만 선택
-            condition_mask = torch.ones_like(original_pred_labels, dtype=torch.bool)
-
-            #gt를 사용해 배경 제거
-            if self.cfg['dataset'] == 'cityscapes':
-                # Cityscapes: gt에서 255인 픽셀 무시
-                valid_gt_mask = gt != 255
-            elif self.cfg['dataset'] == 'ade20k':
-                # ADE20k: gt에서 0번 클래스인 픽셀 무시
-                valid_gt_mask = gt != 0
-
-            correct_masked_pred_labels = torch.where(valid_gt_mask, original_pred_labels, ignore_index)
-
-            #마스크를 (C, H, W) 형태로 변환
-            channel_indices_reshaped = channel_indices.view(num_classes, 1, 1)
-            channel_indices_reshaped = channel_indices_reshaped.to(correct_masked_pred_labels.device)
-            final_mask = channel_indices_reshaped == correct_masked_pred_labels #broadcast
-
-        return final_mask
     
     def perturb(self, img, gt):
         """
@@ -955,7 +917,6 @@ class RSAttack():
                 channel_indices_reshaped = channel_indices.view(num_classes, 1, 1)
                 channel_indices_reshaped = channel_indices_reshaped.to(correct_masked_pred_labels.device)
                 self.mask = channel_indices_reshaped == correct_masked_pred_labels #broadcast
-                print("make mask")
             
             # 3. Calculate initial loss based on probability of TRUE class at matched locations
             # original_probs (C, H, W) 에서 final_mask (C, H, W)가 True인 위치의 값만 선택
