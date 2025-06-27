@@ -152,8 +152,8 @@ def main(config):
     all_ratio_metrics = [[] for _ in range(5)] 
     all_impact_metrics = [[] for _ in range(5)] 
 
-    for i, (img_bgr, filename, gt) in tqdm(enumerate(dataset), desc="Running Sparse-RS Attack", total=len(dataset.images)):
-        setproctitle.setproctitle(f"SparseRS_Attack_{config['dataset']}_{config['model']}_{config['attack_pixel']}({i}/{len(dataset.images)})")
+    for idx, (img_bgr, filename, gt) in tqdm(enumerate(dataset), desc="Running Sparse-RS Attack", total=len(dataset.images)):
+        setproctitle.setproctitle(f"SparseRS_Attack_{config['dataset']}_{config['model']}_{config['attack_pixel']}({idx}/{len(dataset.images)})")
 
         img_tensor_bgr = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(config["device"])
         gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(config["device"])
@@ -179,11 +179,12 @@ def main(config):
             log_path=None # Disable logging for this simple test or provide a path
         )
             
-        for i in range(5):
+        for _ in range(5):
             query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
             adv_img_bgr_list.append(adv_img_bgr)
             img_tensor_bgr = adv_img_bgr
-
+            print(f'restart: {_}')
+            
         img_list.append(img_bgr)
         gt_list.append(gt)
         for query_idx, adv_img_bgr in enumerate(adv_img_bgr_list):
@@ -194,6 +195,7 @@ def main(config):
 
         Image.fromarray(img_bgr[:, :, ::-1]).save(os.path.join(current_img_save_dir, "original.png"))
 
+        print(f"file_name: {filename}")
         for i, adv_img_bgr in enumerate(adv_img_bgr_list):
             query_img_save_dir = os.path.join(current_img_save_dir, f"{i+1}000query")
             os.makedirs(query_img_save_dir, exist_ok=True)
@@ -219,7 +221,7 @@ def main(config):
             l0_norm = calculate_l0_norm(img_bgr, adv_img_bgr)
             pixel_ratio = calculate_pixel_ratio(img_bgr, adv_img_bgr)
             impact = calculate_impact(img_bgr, adv_img_bgr, ori_pred, adv_pred)
-            print(f"file_name: {filename}")
+            
             print(f"L0 norm: {l0_norm}, Pixel ratio: {pixel_ratio}, Impact: {impact}")
 
             all_l0_metrics[i].append(l0_norm)
@@ -229,13 +231,22 @@ def main(config):
     _, init_mious = eval_miou(model, img_list, img_list, gt_list, config)
     benign_to_adv_mious = []
     gt_to_adv_mious = []
+    gt_mean_accuracy  = []
+    gt_overall_accuracy = []
+    benign_mean_accuracy  = []
+    benign_overall_accuracy = []
     mean_l0 = []
     mean_ratio = []
     mean_impact = []
+    
     for i in range(5):
         benign_to_adv_miou, gt_to_adv_miou = eval_miou(model, img_list, adv_img_lists[i], gt_list, config)
         benign_to_adv_mious.append(benign_to_adv_miou['mean_iou'].item())
         gt_to_adv_mious.append(gt_to_adv_miou['mean_iou'].item())
+        gt_mean_accuracy.append(gt_to_adv_miou['mean_accuracy'].item())
+        gt_overall_accuracy.append(gt_to_adv_miou['overall_accuracy'].item())
+        benign_mean_accuracy.append(benign_to_adv_miou['mean_accuracy'].item())
+        benign_overall_accuracy.append(benign_to_adv_miou['overall_accuracy'].item())
 
         mean_l0.append(np.mean(all_l0_metrics[i]).item())
         mean_ratio.append(np.mean(all_ratio_metrics[i]).item())
@@ -244,10 +255,14 @@ def main(config):
     final_results = {
         "Init mIoU" : init_mious['mean_iou'],
         "Average Adversarial mIoU(benign)" : benign_to_adv_mious,
+        "Average Accuracy(benign)": benign_mean_accuracy,
+        "Average Overall Accuracy(benign)": benign_overall_accuracy,
         "Average Adversarial mIoU(gt)" : gt_to_adv_mious,
+        "Average Accuracy(gt)": gt_mean_accuracy,
+        "Average Overall Accuracy(gt)": gt_overall_accuracy,
         "Average L0": mean_l0,
         "Average Ratio": mean_ratio,
-        "Average Impact": mean_impact
+        "Average Impact": mean_impact,
     }
     print("\n--- Experiment Summary ---")
     print(final_results)

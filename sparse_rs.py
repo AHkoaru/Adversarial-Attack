@@ -97,20 +97,28 @@ class RSAttack():
         self.data_loader = data_loader
         self.update_loc_period = update_loc_period if not update_loc_period is None else 4 if not targeted else 10
         self.mask = None
+        self.pre_changed_pixels = None
         
     
-    def margin_and_loss(self, img, final_mask):
+    def margin_and_loss(self, img, final_mask, original_pred_labels):
         adv_result = inference_model(self.model, img.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
 
         adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
-        adv_probs = softmax(adv_logits, dim=0) # Shape: (C, H, W)
-        
+        adv_probs = softmax(adv_logits, dim=0).to(self.device) # Shape: (C, H, W)
+        adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+
+        #select only correct pixels
         adv_correct_probs = adv_probs[final_mask]
-        # Average these probabilities
         loss_val = torch.mean(adv_correct_probs.float())
+        #calculate changed pixels
+        current_changed_pixels = (adv_pred_labels != original_pred_labels.to(self.device)).long().to(self.device)
+        changed_pixels = current_changed_pixels - self.pre_changed_pixels
+        self.pre_changed_pixels = current_changed_pixels
+        changed_pixels_loss = torch.mean(changed_pixels.float())
+        # print(f'loss_val: {loss_val}, changed_pixels_loss: {-changed_pixels_loss}, total_loss: {(loss_val - changed_pixels_loss)}')
 
         # Return loss as numpy float. Lower value means the attack is more successful.
-        return loss_val.detach().cpu().numpy()
+        return (loss_val - changed_pixels_loss).detach().cpu().numpy()
 
     def init_hyperparam(self, x):
         assert self.norm in ['L0', 'patches', 'frames',
@@ -261,7 +269,7 @@ class RSAttack():
         
         return patch_univ.clamp(0., 1.)
 
-    def attack_single_run(self, img, gt, final_mask, initial_loss_val):
+    def attack_single_run(self, img, gt, final_mask, original_pred_labels):
         with torch.no_grad():
             adv = img.clone()
             c, h, w = img.shape[1:]
@@ -283,7 +291,7 @@ class RSAttack():
                     b_all[img_idx] = ind_p.clone()
                     be_all[img_idx] = ind_np.clone()
                     
-                loss_min = self.margin_and_loss(x_best, final_mask)
+                loss_min = self.margin_and_loss(x_best, final_mask, original_pred_labels)
                 n_queries = 1
 
                 # pbar = tqdm(range(1, self.n_queries), desc="Sparse-RS Attack", ncols=120)
@@ -312,11 +320,12 @@ class RSAttack():
                             x_new[img_idx, :, np_set // w, np_set % w] = new_clr.clone()
                         
                     # compute loss of the new candidates
-                    loss = self.margin_and_loss(x_new, final_mask)
+                    loss = self.margin_and_loss(x_new, final_mask, original_pred_labels)
                     n_queries += 1  # 단일 이미지이므로 간단히 증가
                     
                     # update best solution (loss 기반으로만 판단)
                     if loss < loss_min:
+                        print(f'loss: {loss}')
                         loss_min = loss
                         x_best = x_new.clone()
                         
@@ -891,8 +900,8 @@ class RSAttack():
                 print("\n--- Error calling inference_model (Original Image) ---")
                 raise e
             original_logits = original_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
-            original_probs = softmax(original_logits, dim=0) # Shape: (C, H, W)
-            original_pred_labels = original_result.pred_sem_seg.data.squeeze() # Shape: (H, W)
+            original_probs = softmax(original_logits, dim=0).to(self.device) # Shape: (C, H, W)
+            original_pred_labels = original_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
 
             if self.mask is None:
                 # 2. Create masks
@@ -917,19 +926,13 @@ class RSAttack():
                 channel_indices_reshaped = channel_indices.view(num_classes, 1, 1)
                 channel_indices_reshaped = channel_indices_reshaped.to(correct_masked_pred_labels.device)
                 self.mask = channel_indices_reshaped == correct_masked_pred_labels #broadcast
-            
-            # 3. Calculate initial loss based on probability of TRUE class at matched locations
-            # original_probs (C, H, W) 에서 final_mask (C, H, W)가 True인 위치의 값만 선택
-            selected_initial_probs = original_probs[self.mask] # 1D Tensor of selected logits
-
-            # 선택된 확률 값들의 평균을 계산
-            initial_loss_val = torch.mean(selected_initial_probs)
+                #initialize changed pixels
+                self.pre_changed_pixels = torch.zeros(original_pred_labels.shape[0], original_pred_labels.shape[1]).to(self.device)
             
         torch.random.manual_seed(self.seed)
         torch.cuda.random.manual_seed(self.seed)
         np.random.seed(self.seed)
         
-
-        qr_curr, adv_curr = self.attack_single_run(img, gt, self.mask, initial_loss_val)
+        qr_curr, adv_curr = self.attack_single_run(img, gt, self.mask, original_pred_labels)
 
         return qr_curr, adv_curr
