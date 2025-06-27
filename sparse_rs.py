@@ -114,7 +114,7 @@ class RSAttack():
         current_changed_pixels = (adv_pred_labels != original_pred_labels.to(self.device)).long().to(self.device)
         changed_pixels = current_changed_pixels - self.pre_changed_pixels
         self.pre_changed_pixels = current_changed_pixels
-        changed_pixels_loss = torch.mean(changed_pixels.float())
+        changed_pixels_loss = (torch.mean(changed_pixels.float()) + 1) / 2
         # print(f'loss_val: {loss_val}, changed_pixels_loss: {-changed_pixels_loss}, total_loss: {(loss_val - changed_pixels_loss)}')
 
         # Return loss as numpy float. Lower value means the attack is more successful.
