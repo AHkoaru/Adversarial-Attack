@@ -176,7 +176,9 @@ def main(config):
             loss='segmentation_prob', # As used in the class
             resc_schedule=True,
             device=config["device"],
-            log_path=None # Disable logging for this simple test or provide a path
+            log_path=None, # Disable logging for this simple test or provide a path
+            original_img=img_bgr,
+            d=5
         )
             
         for _ in range(5):

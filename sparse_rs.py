@@ -72,7 +72,10 @@ class RSAttack():
             init_patches='random_squares',
             resample_loc=None,
             data_loader=None,
-            update_loc_period=None):
+            update_loc_period=None,
+            original_img=None,
+            d=5
+            ):
         """
         Sparse-RS implementation in PyTorch
         """
@@ -98,7 +101,8 @@ class RSAttack():
         self.update_loc_period = update_loc_period if not update_loc_period is None else 4 if not targeted else 10
         self.mask = None
         self.pre_changed_pixels = None
-        
+        self.original_img = original_img
+        self.d = d
     
     def margin_and_loss(self, img, final_mask, original_pred_labels):
         adv_result = inference_model(self.model, img.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
@@ -110,11 +114,13 @@ class RSAttack():
         #select only correct pixels
         adv_correct_probs = adv_probs[final_mask]
         loss_val = torch.mean(adv_correct_probs.float())
+
         #calculate changed pixels
+        l0_norm = calculate_l0_norm(img.squeeze(0).permute(1, 2, 0).clone().cpu().numpy().astype(np.uint8), self.original_img)
         current_changed_pixels = (adv_pred_labels != original_pred_labels.to(self.device)).long().to(self.device)
         changed_pixels = current_changed_pixels - self.pre_changed_pixels
         self.pre_changed_pixels = current_changed_pixels
-        changed_pixels_loss = (torch.mean(changed_pixels.float()) + 1) / 2
+        changed_pixels_loss = (torch.sum(changed_pixels.float()) / (l0_norm * (self.d ** 2)))
         # print(f'loss_val: {loss_val}, changed_pixels_loss: {-changed_pixels_loss}, total_loss: {(loss_val - changed_pixels_loss)}')
 
         # Return loss as numpy float. Lower value means the attack is more successful.
