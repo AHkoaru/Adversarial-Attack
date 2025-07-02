@@ -153,7 +153,7 @@ def main(config):
     all_impact_metrics = [[] for _ in range(5)] 
 
     for idx, (img_bgr, filename, gt) in tqdm(enumerate(dataset), desc="Running Sparse-RS Attack", total=len(dataset.images)):
-        setproctitle.setproctitle(f"SparseRS_Attack_{config['dataset']}_{config['model']}_{config['attack_pixel']}({idx}/{len(dataset.images)})")
+        setproctitle.setproctitle(f"SparseRS_Attack_{config['dataset']}_{config['model']}_{config['iters']}_{config['attack_pixel']}({idx}/{len(dataset.images)})")
 
         img_tensor_bgr = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(config["device"])
         gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(config["device"])
@@ -161,7 +161,7 @@ def main(config):
         ori_result = inference_model(model, img_bgr.copy()) 
         ori_pred = ori_result.pred_sem_seg.data.squeeze().cpu().numpy()
 
-        adv_img_bgr_list = []
+        
         attack = RSAttack(
             model=model,
             cfg=config, # Pass the simplified config for RSAttack internal use
@@ -180,13 +180,18 @@ def main(config):
             original_img=img_bgr,
             d=5
         )
-            
-        for _ in range(5):
+
+        adv_img_bgr_list = []
+        total_queries = config["iters"] * config["n_queries"]
+        save_steps = [int(total_queries * (i+1) / 5) for i in range(5)]
+        for iter_idx in range(config["iters"]):
             query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
-            adv_img_bgr_list.append(adv_img_bgr)
+            print(f'query: {query}')
             img_tensor_bgr = adv_img_bgr
-            print(f'restart: {_}')
-            
+            if query in save_steps:
+                adv_img_bgr_list.append(adv_img_bgr)
+                print(query)
+
         img_list.append(img_bgr)
         gt_list.append(gt)
         for query_idx, adv_img_bgr in enumerate(adv_img_bgr_list):
@@ -280,11 +285,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run Sparse-RS attack evaluation.")
     parser.add_argument("--config", type=str, required=True, help="Path to the config file.")
     parser.add_argument('--device', type=str, default='cuda', help='Device to use (cuda or cpu).')
-    parser.add_argument('--n_queries', type=int, default=5000, help='Max number of queries for RSAttack.')
-    parser.add_argument('--eps', type=float, default=0.05, help='Epsilon for L0 norm in RSAttack (perturbation budget, e.g., percentage of pixels).')
+    parser.add_argument('--n_queries', type=int, default=10, help='Max number of queries for RSAttack.')
+    parser.add_argument('--eps', type=float, default=0.0001, help='Epsilon for L0 norm in RSAttack (perturbation budget, e.g., percentage of pixels).')
     parser.add_argument('--p_init', type=float, default=0.8, help='Initial probability p_init for RSAttack.')
     parser.add_argument('--n_restarts', type=int, default=1, help='Number of restarts for RSAttack.')
     parser.add_argument('--num_images', type=int, default=100, help='Number of images to evaluate from the dataset.')
+    parser.add_argument('--iters', type=int, default=500, help='Number of iterations for RSAttack.')
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -296,5 +302,6 @@ if __name__ == '__main__':
     config["p_init"] = args.p_init
     config["n_restarts"] = args.n_restarts
     config["num_images"] = args.num_images
+    config["iters"] = args.iters
     config["base_dir"] = f"./data/{config['attack_method']}/results/{config['dataset']}/{config['model']}"
     main(config)
