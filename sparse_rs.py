@@ -286,7 +286,6 @@ class RSAttack():
             c, h, w = img.shape[1:]
             n_features = c * h * w
             n_ex_total = img.shape[0]
-            best_changed_pixels = self.pre_changed_pixels
 
             if self.norm == 'L0':
                 eps = int(self.eps * h * w)
@@ -303,7 +302,8 @@ class RSAttack():
                     b_all[img_idx] = ind_p.clone()
                     be_all[img_idx] = ind_np.clone()
                     
-                loss_min, _ = self.margin_and_loss(x_best, final_mask, first_img_pred_labels)
+                loss_min, current_changed_pixels = self.margin_and_loss(x_best, final_mask, first_img_pred_labels)
+                best_changed_pixels = current_changed_pixels
                 self.current_query += 1 
 
                 # pbar = tqdm(range(1, self.n_queries), desc="Sparse-RS Attack", ncols=120)
