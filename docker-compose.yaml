@@ -1,0 +1,22 @@
+version: '3'
+
+services:
+  pytorch:
+    image: pytorch/pytorch:2.6.0-cuda12.6-cudnn9-devel
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    command: >
+      bash -c "apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0 &&
+              pip install -r requirement.txt &&
+              /bin/bash"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    tty: true
+    stdin_open: true
+
