@@ -74,7 +74,8 @@ class RSAttack():
             data_loader=None,
             update_loc_period=None,
             original_img=None,
-            d=5
+            d=5,
+            decision_loss=True
             ):
         """
         Sparse-RS implementation in PyTorch
@@ -106,8 +107,9 @@ class RSAttack():
         self.d = d
         self.current_query = 0
         self.verbose = verbose
+        self.dicision_loss = dicision_loss
         
-    def margin_and_loss(self, img, final_mask, first_img_pred_labels, dicision_loss=True):
+    def margin_and_loss(self, img, final_mask, first_img_pred_labels):
         adv_result = inference_model(self.model, img.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
 
         adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
@@ -117,7 +119,7 @@ class RSAttack():
         #select only correct pixels
         adv_correct_probs = adv_probs[final_mask]
         loss_val = torch.mean(adv_correct_probs.float())
-        if dicision_loss is False:
+        if self.dicision_loss is False:
             return loss_val.detach().cpu().numpy(), None
         
         H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
