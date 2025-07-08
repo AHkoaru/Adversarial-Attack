@@ -119,7 +119,7 @@ class RSAttack():
         #select only correct pixels
         adv_correct_probs = adv_probs[final_mask]
         loss_val = torch.mean(adv_correct_probs.float())
-        if self.dicision_loss is False:
+        if self.decision_loss is False:
             return loss_val.detach().cpu().numpy(), None
         
         H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
