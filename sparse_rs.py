@@ -62,7 +62,7 @@ class RSAttack():
             p_init=.8,
             n_restarts=1,
             seed=0,
-            verbose=True,
+            verbose=False,
             targeted=False,
             loss='margin',
             resc_schedule=True,
@@ -945,7 +945,6 @@ class RSAttack():
                 self.mask = channel_indices_reshaped == correct_masked_pred_labels #broadcast
                 #initialize changed pixels
                 self.pre_changed_pixels = torch.zeros(first_img_pred_labels.shape[0], first_img_pred_labels.shape[1]).to(self.device)
-                print('mask')
         
         qr_curr, adv_curr, best_changed_pixels = self.attack_single_run(img, gt, self.mask, first_img_pred_labels)
         

@@ -5,6 +5,11 @@ import datetime
 import importlib
 import numpy as np
 from PIL import Image
+import multiprocessing as mp
+from functools import partial
+
+# CUDA 멀티프로세싱을 위한 시작 방법 설정
+mp.set_start_method('spawn', force=True)
 
 from mmseg.apis import init_model, inference_model
 from dataset import CitySet, ADESet # main.py에서 사용된 데이터셋 클래스
@@ -18,7 +23,6 @@ import argparse
 import setproctitle
 
 
-
 def load_config(config_path):
     """
     Load and return config dictionary from a python file at config_path.
@@ -28,6 +32,141 @@ def load_config(config_path):
     config_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(config_module)
     return config_module.config
+
+
+def init_model_for_process(model_configs, dataset, model_name, device):
+    """각 프로세스에서 모델을 초기화하는 함수"""
+    if model_name == "setr":
+        model = init_model(model_configs["config"], None, 'cuda')
+        checkpoint = torch.load(model_configs["checkpoint"], map_location='cuda', weights_only=False)
+        # 모델의 projection 레이어에 bias 추가
+        model.backbone.patch_embed.projection.bias = torch.nn.Parameter(
+            torch.zeros(checkpoint["state_dict"]["backbone.patch_embed.projection.weight"].shape[0], device='cuda')
+        )
+        model.load_state_dict(checkpoint['state_dict'])
+    else:
+        model = init_model(model_configs["config"], None, device)
+        # 2. 체크포인트 로드 (weights_only=False 직접 설정)
+        checkpoint = torch.load(model_configs["checkpoint"], map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint['state_dict'])
+
+    del checkpoint  # 체크포인트 변수 삭제
+    torch.cuda.empty_cache()  # GPU 캐시 정리
+    
+    return model
+
+
+def process_single_image(args):
+    """단일 이미지를 처리하는 함수 (멀티프로세싱용)"""
+    (img_bgr, filename, gt, model_configs, config, base_dir, idx, total_images) = args
+    
+    # 프로세스별 모델 초기화
+    model = init_model_for_process(model_configs, config["dataset"], config["model"], config["device"])
+    
+    setproctitle.setproctitle(f"SparseRS_Attack_{config['dataset']}_{config['model']}_{config['iters']}_{config['attack_pixel']}({idx}/{total_images})")
+
+    img_tensor_bgr = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(config["device"])
+    gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(config["device"])
+
+    ori_result = inference_model(model, img_bgr.copy()) 
+    ori_pred = ori_result.pred_sem_seg.data.squeeze().cpu().numpy()
+
+    attack = RSAttack(
+        model=model,
+        cfg=config, # Pass the simplified config for RSAttack internal use
+        norm='L0', # or 'patches'
+        n_queries=config["n_queries"],
+        eps=config["eps"], # For L0, this is number of pixels. For patches, it's area.
+        p_init=config["p_init"],
+        n_restarts=config["n_restarts"],
+        seed=0,
+        verbose=False,
+        targeted=False,
+        loss='segmentation_prob', # As used in the class
+        resc_schedule=True,
+        device=config["device"],
+        log_path=None, # Disable logging for this simple test or provide a path
+        original_img=img_bgr,
+        d=5
+    )
+
+    adv_img_bgr_list = []
+    total_queries = config["iters"] * config["n_queries"]
+    save_steps = [int(total_queries * (i+1) / 5) for i in range(5)]
+    
+    for iter_idx in range(config["iters"]):
+        query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
+        img_tensor_bgr = adv_img_bgr
+        if query in save_steps:
+            adv_img_bgr_list.append(adv_img_bgr)
+
+    # 결과 저장
+    current_img_save_dir = os.path.join(base_dir, os.path.splitext(os.path.basename(filename))[0])
+    os.makedirs(current_img_save_dir, exist_ok=True)
+
+    Image.fromarray(img_bgr[:, :, ::-1]).save(os.path.join(current_img_save_dir, "original.png"))
+
+    print(f"file_name: {filename}")
+    
+    # 메트릭 계산을 위한 리스트
+    l0_metrics = []
+    ratio_metrics = []
+    impact_metrics = []
+    
+    for i, adv_img_bgr in enumerate(adv_img_bgr_list):
+        query_img_save_dir = os.path.join(current_img_save_dir, f"{i+1}000query")
+        os.makedirs(query_img_save_dir, exist_ok=True)
+
+        adv_img_bgr = adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+        # 적대적 이미지에 대한 추론 (main.py 참조)
+        adv_result = inference_model(model, adv_img_bgr)
+        adv_pred = adv_result.pred_sem_seg.data.squeeze().cpu().numpy()
+        delta_img = np.abs(img_bgr.astype(np.int16) - adv_img_bgr.astype(np.int16)).astype(np.uint8)
+    
+        Image.fromarray(adv_img_bgr[:, :, ::-1]).save(os.path.join(query_img_save_dir, "adv.png"))
+        Image.fromarray(delta_img).save(os.path.join(query_img_save_dir, "delta.png"))
+        # 시각화된 분할 마스크 저장 (main.py의 visualize_segmentation 사용)
+
+        visualize_segmentation(img_bgr, ori_pred,
+                            save_path=os.path.join(query_img_save_dir, "ori_seg.png"),
+                            alpha=0.5, dataset=config["dataset"]) # 데이터셋에 맞는 팔레트 사용
+        
+        visualize_segmentation(img_bgr, adv_pred,
+                            save_path=os.path.join(query_img_save_dir, "ori_seg_only.png"),
+                            alpha=1, dataset=config["dataset"])
+        
+        visualize_segmentation(adv_img_bgr, adv_pred,
+                            save_path=os.path.join(query_img_save_dir, "adv_seg.png"),
+                            alpha=0.5, dataset=config["dataset"])
+        
+        visualize_segmentation(adv_img_bgr, ori_pred,
+                            save_path=os.path.join(query_img_save_dir, "adv_seg_only.png"),
+                            alpha=1, dataset=config["dataset"])
+        
+    
+        l0_norm = calculate_l0_norm(img_bgr, adv_img_bgr)
+        pixel_ratio = calculate_pixel_ratio(img_bgr, adv_img_bgr)
+        impact = calculate_impact(img_bgr, adv_img_bgr, ori_pred, adv_pred)
+        
+        print(f"L0 norm: {l0_norm}, Pixel ratio: {pixel_ratio}, Impact: {impact}")
+
+        l0_metrics.append(l0_norm)
+        ratio_metrics.append(pixel_ratio)
+        impact_metrics.append(impact)
+
+    # 모델 메모리 정리
+    del model
+    torch.cuda.empty_cache()
+    
+    return {
+        'img_bgr': img_bgr,
+        'gt': gt,
+        'filename': filename,
+        'adv_img_bgr_list': adv_img_bgr_list,
+        'l0_metrics': l0_metrics,
+        'ratio_metrics': ratio_metrics,
+        'impact_metrics': impact_metrics
+    }
 
 
 def main(config):
@@ -119,121 +258,63 @@ def main(config):
     dataset.filenames = dataset.filenames[:min(len(dataset.filenames), num_images)]
     dataset.gt_images = dataset.gt_images[:min(len(dataset.gt_images), num_images)]
 
-    if config["model"] == "setr":
-        model = init_model(model_cfg["config"], None, 'cuda')
-        checkpoint = torch.load(model_cfg["checkpoint"], map_location='cuda', weights_only=False)
-        # 모델의 projection 레이어에 bias 추가
-        model.backbone.patch_embed.projection.bias = torch.nn.Parameter(
-            torch.zeros(checkpoint["state_dict"]["backbone.patch_embed.projection.weight"].shape[0], device='cuda')
-        )
-        model.load_state_dict(checkpoint['state_dict'])
-    else:
-        model = init_model(model_cfg["config"], None, device)
-        # 2. 체크포인트 로드 (weights_only=False 직접 설정)
-        checkpoint = torch.load(model_cfg["checkpoint"], map_location=device, weights_only=False)
-        model.load_state_dict(checkpoint['state_dict'])
-
-    del checkpoint  # 체크포인트 변수 삭제
-    torch.cuda.empty_cache()  # GPU 캐시 정리
-    # Initialize RSAttack
-
     # 결과 저장을 위한 디렉토리 설정
     current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     experiment_name = f"{config['dataset']}_{config['model']}_sparse-rs_{current_time}"
     base_dir = os.path.join(config["base_dir"], current_time)
     os.makedirs(base_dir, exist_ok=True)
     
+    # 멀티프로세싱을 위한 데이터 준비
+    process_args = []
+    for idx, (img_bgr, filename, gt) in enumerate(dataset):
+        process_args.append((img_bgr, filename, gt, model_cfg, config, base_dir, idx, len(dataset.images)))
+    
+    # 멀티프로세싱 실행
+    num_processes = min(mp.cpu_count(), config.get("num_processes", 4))  # 기본값 4개 프로세스
+    print(f"Using {num_processes} processes for parallel processing")
+    
+    results = []
+    with mp.Pool(processes=num_processes) as pool:
+        for result in tqdm(pool.imap(process_single_image, process_args), 
+                          total=len(process_args), 
+                          desc="Running Sparse-RS Attack"):
+            results.append(result)
+    
+    # 결과 수집 및 정리
     img_list = []
     gt_list = []
     filename_list = []
     adv_img_lists = [[] for _ in range(5)]
-    adv_query_lists = [[] for _ in range(5)]
     all_l0_metrics = [[] for _ in range(5)] 
     all_ratio_metrics = [[] for _ in range(5)] 
     all_impact_metrics = [[] for _ in range(5)] 
 
-    for idx, (img_bgr, filename, gt) in tqdm(enumerate(dataset), desc="Running Sparse-RS Attack", total=len(dataset.images)):
-        setproctitle.setproctitle(f"SparseRS_Attack_{config['dataset']}_{config['model']}_{config['iters']}_{config['attack_pixel']}({idx}/{len(dataset.images)})")
-
-        img_tensor_bgr = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(config["device"])
-        gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(config["device"])
-
-        ori_result = inference_model(model, img_bgr.copy()) 
-        ori_pred = ori_result.pred_sem_seg.data.squeeze().cpu().numpy()
-
+    for result in results:
+        img_list.append(result['img_bgr'])
+        gt_list.append(result['gt'])
+        filename_list.append(result['filename'])
         
-        attack = RSAttack(
-            model=model,
-            cfg=config, # Pass the simplified config for RSAttack internal use
-            norm='L0', # or 'patches'
-            n_queries=config["n_queries"],
-            eps=config["eps"], # For L0, this is number of pixels. For patches, it's area.
-            p_init=config["p_init"],
-            n_restarts=config["n_restarts"],
-            seed=0,
-            verbose=True,
-            targeted=False,
-            loss='segmentation_prob', # As used in the class
-            resc_schedule=True,
-            device=config["device"],
-            log_path=None, # Disable logging for this simple test or provide a path
-            original_img=img_bgr,
-            d=5
+        for i, adv_img_bgr in enumerate(result['adv_img_bgr_list']):
+            adv_img_lists[i].append(adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8))
+            all_l0_metrics[i].append(result['l0_metrics'][i])
+            all_ratio_metrics[i].append(result['ratio_metrics'][i])
+            all_impact_metrics[i].append(result['impact_metrics'][i])
+
+    # 평가를 위한 모델 초기화 (한 번만)
+    if config["model"] == "setr":
+        model = init_model(model_cfg["config"], None, 'cuda')
+        checkpoint = torch.load(model_cfg["checkpoint"], map_location='cuda', weights_only=False)
+        model.backbone.patch_embed.projection.bias = torch.nn.Parameter(
+            torch.zeros(checkpoint["state_dict"]["backbone.patch_embed.projection.weight"].shape[0], device='cuda')
         )
+        model.load_state_dict(checkpoint['state_dict'])
+    else:
+        model = init_model(model_cfg["config"], None, device)
+        checkpoint = torch.load(model_cfg["checkpoint"], map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint['state_dict'])
 
-        adv_img_bgr_list = []
-        total_queries = config["iters"] * config["n_queries"]
-        save_steps = [int(total_queries * (i+1) / 5) for i in range(5)]
-        for iter_idx in range(config["iters"]):
-            query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
-            print(f'query: {query}')
-            img_tensor_bgr = adv_img_bgr
-            if query in save_steps:
-                adv_img_bgr_list.append(adv_img_bgr)
-                print(query)
-
-        img_list.append(img_bgr)
-        gt_list.append(gt)
-        for query_idx, adv_img_bgr in enumerate(adv_img_bgr_list):
-            adv_img_lists[query_idx].append(adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8))
-
-        current_img_save_dir = os.path.join(base_dir, os.path.splitext(os.path.basename(filename))[0])
-        os.makedirs(current_img_save_dir, exist_ok=True)
-
-        Image.fromarray(img_bgr[:, :, ::-1]).save(os.path.join(current_img_save_dir, "original.png"))
-
-        print(f"file_name: {filename}")
-        for i, adv_img_bgr in enumerate(adv_img_bgr_list):
-            query_img_save_dir = os.path.join(current_img_save_dir, f"{i+1}000query")
-            os.makedirs(query_img_save_dir, exist_ok=True)
-
-            adv_img_bgr = adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-            # 적대적 이미지에 대한 추론 (main.py 참조)
-            adv_result = inference_model(model, adv_img_bgr)
-            adv_pred = adv_result.pred_sem_seg.data.squeeze().cpu().numpy()
-            delta_img = np.abs(img_bgr.astype(np.int16) - adv_img_bgr.astype(np.int16)).astype(np.uint8)
-        
-            Image.fromarray(adv_img_bgr[:, :, ::-1]).save(os.path.join(query_img_save_dir, "adv.png"))
-            Image.fromarray(delta_img).save(os.path.join(query_img_save_dir, "delta.png"))
-            # 시각화된 분할 마스크 저장 (main.py의 visualize_segmentation 사용)
-
-            visualize_segmentation(img_bgr, ori_pred,
-                                save_path=os.path.join(query_img_save_dir, "ori_seg.png"),
-                                alpha=0.5, dataset=config["dataset"]) # 데이터셋에 맞는 팔레트 사용
-            
-            visualize_segmentation(adv_img_bgr, adv_pred,
-                                save_path=os.path.join(query_img_save_dir, "adv_seg.png"),
-                                alpha=0.5, dataset=config["dataset"])
-        
-            l0_norm = calculate_l0_norm(img_bgr, adv_img_bgr)
-            pixel_ratio = calculate_pixel_ratio(img_bgr, adv_img_bgr)
-            impact = calculate_impact(img_bgr, adv_img_bgr, ori_pred, adv_pred)
-            
-            print(f"L0 norm: {l0_norm}, Pixel ratio: {pixel_ratio}, Impact: {impact}")
-
-            all_l0_metrics[i].append(l0_norm)
-            all_ratio_metrics[i].append(pixel_ratio)
-            all_impact_metrics[i].append(impact)
+    del checkpoint
+    torch.cuda.empty_cache()
 
     _, init_mious = eval_miou(model, img_list, img_list, gt_list, config)
     benign_to_adv_mious = []
@@ -291,6 +372,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_restarts', type=int, default=1, help='Number of restarts for RSAttack.')
     parser.add_argument('--num_images', type=int, default=100, help='Number of images to evaluate from the dataset.')
     parser.add_argument('--iters', type=int, default=500, help='Number of iterations for RSAttack.')
+    parser.add_argument('--num_processes', type=int, default=4, help='Number of processes for parallel processing.')
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -303,5 +385,6 @@ if __name__ == '__main__':
     config["n_restarts"] = args.n_restarts
     config["num_images"] = args.num_images
     config["iters"] = args.iters
+    config["num_processes"] = args.num_processes
     config["base_dir"] = f"./data/{config['attack_method']}/results/{config['dataset']}/{config['model']}"
     main(config)
