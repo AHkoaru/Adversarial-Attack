@@ -107,7 +107,7 @@ class RSAttack():
         self.d = d
         self.current_query = 0
         self.verbose = verbose
-        self.dicision_loss = dicision_loss
+        self.decision_loss = decision_loss
         
     def margin_and_loss(self, img, final_mask, first_img_pred_labels):
         adv_result = inference_model(self.model, img.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
