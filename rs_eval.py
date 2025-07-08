@@ -87,7 +87,8 @@ def process_single_image(args):
         device=config["device"],
         log_path=None, # Disable logging for this simple test or provide a path
         original_img=img_bgr,
-        d=5
+        d=5,
+        decision_loss=config["decision_loss"]
     )
 
     adv_img_bgr_list = []
@@ -373,6 +374,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_images', type=int, default=100, help='Number of images to evaluate from the dataset.')
     parser.add_argument('--iters', type=int, default=500, help='Number of iterations for RSAttack.')
     parser.add_argument('--num_processes', type=int, default=4, help='Number of processes for parallel processing.')
+    parser.add_argument('--decision_loss', type=bool, default=True, help='Whether to use decision loss.')
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -387,4 +389,5 @@ if __name__ == '__main__':
     config["iters"] = args.iters
     config["num_processes"] = args.num_processes
     config["base_dir"] = f"./data/{config['attack_method']}/results/{config['dataset']}/{config['model']}"
+    config["decision_loss"] = args.decision_loss
     main(config)
