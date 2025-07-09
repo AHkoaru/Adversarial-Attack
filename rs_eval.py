@@ -71,6 +71,7 @@ def process_single_image(args):
     ori_result = inference_model(model, img_bgr.copy()) 
     ori_pred = ori_result.pred_sem_seg.data.squeeze().cpu().numpy()
 
+    # 공격 객체를 한 번만 생성하고 재사용
     attack = RSAttack(
         model=model,
         cfg=config, # Pass the simplified config for RSAttack internal use
@@ -80,7 +81,7 @@ def process_single_image(args):
         p_init=config["p_init"],
         n_restarts=config["n_restarts"],
         seed=0,
-        verbose=False,
+        verbose=config.get("verbose", False),  # config에서 verbose 설정 가져오기
         targeted=False,
         loss='segmentation_prob', # As used in the class
         resc_schedule=True,
@@ -88,18 +89,24 @@ def process_single_image(args):
         log_path=None, # Disable logging for this simple test or provide a path
         original_img=img_bgr,
         d=5,
-        decision_loss=config["decision_loss"]
+        use_decision_loss=config["use_decision_loss"]
     )
 
     adv_img_bgr_list = []
     total_queries = config["iters"] * config["n_queries"]
     save_steps = [int(total_queries * (i+1) / 5) for i in range(5)]
+    current_queries = 0
     
     for iter_idx in range(config["iters"]):
-        query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
-        img_tensor_bgr = adv_img_bgr
-        if query in save_steps:
+        current_query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
+        img_tensor_bgr = adv_img_bgr  # 다음 iteration을 위해 업데이트
+        if current_query in save_steps:
+            print(f"save_query: {current_query}")
             adv_img_bgr_list.append(adv_img_bgr)
+    
+    # 모든 save_steps에 도달하지 못한 경우 마지막 결과로 채우기
+    while len(adv_img_bgr_list) < 5:
+        adv_img_bgr_list.append(adv_img_bgr)
 
     # 결과 저장
     current_img_save_dir = os.path.join(base_dir, os.path.splitext(os.path.basename(filename))[0])
@@ -132,7 +139,7 @@ def process_single_image(args):
                             save_path=os.path.join(query_img_save_dir, "ori_seg.png"),
                             alpha=0.5, dataset=config["dataset"]) # 데이터셋에 맞는 팔레트 사용
         
-        visualize_segmentation(img_bgr, adv_pred,
+        visualize_segmentation(img_bgr, ori_pred,
                             save_path=os.path.join(query_img_save_dir, "ori_seg_only.png"),
                             alpha=1, dataset=config["dataset"])
         
@@ -140,7 +147,7 @@ def process_single_image(args):
                             save_path=os.path.join(query_img_save_dir, "adv_seg.png"),
                             alpha=0.5, dataset=config["dataset"])
         
-        visualize_segmentation(adv_img_bgr, ori_pred,
+        visualize_segmentation(adv_img_bgr, adv_pred,
                             save_path=os.path.join(query_img_save_dir, "adv_seg_only.png"),
                             alpha=1, dataset=config["dataset"])
         
@@ -157,6 +164,7 @@ def process_single_image(args):
 
     # 모델 메모리 정리
     del model
+    del attack  # 공격 객체도 삭제
     torch.cuda.empty_cache()
     
     return {
@@ -263,7 +271,7 @@ def main(config):
     current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     experiment_name = f"{config['dataset']}_{config['model']}_sparse-rs_{current_time}"
     base_dir = os.path.join(config["base_dir"], current_time)
-    os.makedirs(base_dir, exist_ok=True)
+    os.makedirs(base_dir, exist_ok=True, mode=0o777)
     
     # 멀티프로세싱을 위한 데이터 준비
     process_args = []
@@ -373,8 +381,9 @@ if __name__ == '__main__':
     parser.add_argument('--n_restarts', type=int, default=1, help='Number of restarts for RSAttack.')
     parser.add_argument('--num_images', type=int, default=100, help='Number of images to evaluate from the dataset.')
     parser.add_argument('--iters', type=int, default=500, help='Number of iterations for RSAttack.')
-    parser.add_argument('--num_processes', type=int, default=4, help='Number of processes for parallel processing.')
-    parser.add_argument('--decision_loss', type=bool, default=True, help='Whether to use decision loss.')
+    parser.add_argument('--num_processes', type=int, default=1, help='Number of processes for parallel processing.')
+    parser.add_argument('--use_decision_loss', type=str, default='True', choices=['True', 'False'], help='Whether to use decision loss.')
+    parser.add_argument('--verbose', action='store_true', help='Enable verbose output.')
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -389,5 +398,6 @@ if __name__ == '__main__':
     config["iters"] = args.iters
     config["num_processes"] = args.num_processes
     config["base_dir"] = f"./data/{config['attack_method']}/results/{config['dataset']}/{config['model']}"
-    config["decision_loss"] = args.decision_loss
+    config["use_decision_loss"] = args.use_decision_loss.lower() == 'true'  # 문자열을 boolean으로 변환
+    config["verbose"] = args.verbose
     main(config)
