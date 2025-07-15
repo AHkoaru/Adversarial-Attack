@@ -7,7 +7,7 @@ services:
       - .:/workspace
     working_dir: /workspace
     command: >
-      bash -c "apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0 &&
+      bash -c "apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0 tmux&&
               pip install -r requirement.txt &&
               /bin/bash"
     deploy:
@@ -19,4 +19,3 @@ services:
               capabilities: [gpu]
     tty: true
     stdin_open: true
-
