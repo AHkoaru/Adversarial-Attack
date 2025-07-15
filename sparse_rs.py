@@ -119,12 +119,21 @@ class RSAttack():
         adv_result = inference_model(self.model, img.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
 
         adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
-        adv_probs = softmax(adv_logits, dim=0).to(self.device) # Shape: (C, H, W)
-        adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
-
-        #select only correct pixels
-        adv_correct_probs = adv_probs[final_mask]
-        loss_val = torch.mean(adv_correct_probs.float())
+        # margin 기반 loss로 변경
+        # final_mask: (Class, H, W) - 정답 위치 True
+        # 1. 정답 클래스 인덱스 맵 (H, W)
+        gt_indices = final_mask.float().argmax(dim=0)  # (H, W)
+        # 2. 정답 로짓
+        correct_logits = adv_logits.gather(0, gt_indices.unsqueeze(0)).squeeze(0)  # (H, W)
+        # 3. 정답이 아닌 클래스의 로짓 중 최대값
+        adv_logits_clone = adv_logits.clone()
+        # (C, H, W)에서 정답 위치에 -inf를 넣어줌
+        h, w = adv_logits.shape[1], adv_logits.shape[2]
+        adv_logits_clone[gt_indices, torch.arange(h).unsqueeze(1).expand(h, w), torch.arange(w).expand(h, w)] = float('-inf')
+        max_wrong_logits, _ = adv_logits_clone.max(dim=0)  # (H, W)
+        # 4. margin 계산
+        margin = correct_logits - max_wrong_logits  # (H, W)
+        loss_val = margin.mean()
         
         if self.use_decision_loss is False:
             if self.verbose is True:
@@ -132,6 +141,7 @@ class RSAttack():
             return loss_val.detach().cpu().numpy(), None, None
         
         # decision_loss=True일 때만 changed pixels 계산
+        adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
         H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
         current_changed_pixels = (adv_pred_labels != self.original_pred_labels.to(self.device)).long().to(self.device)
         
