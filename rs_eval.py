@@ -63,7 +63,7 @@ def process_single_image(args):
     # 프로세스별 모델 초기화
     model = init_model_for_process(model_configs, config["dataset"], config["model"], config["device"])
     
-    setproctitle.setproctitle(f"SparseRS_Attack_{config['dataset']}_{config['model']}_{config['iters']}_{config['attack_pixel']}({idx}/{total_images})")
+    setproctitle.setproctitle(f"({idx+1}/{total_images})_SparseRS_Attack_{config['dataset']}_{config['model']}_{config['iters']}_{config['attack_pixel']}_use_decision_loss_{config['use_decision_loss']}")
 
     img_tensor_bgr = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(config["device"])
     gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(config["device"])
@@ -275,19 +275,15 @@ def main(config):
     
     # 멀티프로세싱을 위한 데이터 준비
     process_args = []
-    for idx, (img_bgr, filename, gt) in enumerate(dataset):
+    for idx, (img_bgr, filename, gt) in enumerate(zip(dataset.images, dataset.filenames, dataset.gt_images)):
         process_args.append((img_bgr, filename, gt, model_cfg, config, base_dir, idx, len(dataset.images)))
-    
-    # 멀티프로세싱 실행
-    num_processes = min(mp.cpu_count(), config.get("num_processes", 4))  # 기본값 4개 프로세스
-    print(f"Using {num_processes} processes for parallel processing")
-    
+
+    # 멀티프로세싱 대신 순차적으로 실행
+    print(f"Sequential processing for {len(process_args)} images...")
     results = []
-    with mp.Pool(processes=num_processes) as pool:
-        for result in tqdm(pool.imap(process_single_image, process_args), 
-                          total=len(process_args), 
-                          desc="Running Sparse-RS Attack"):
-            results.append(result)
+    for args in tqdm(process_args, total=len(process_args), desc="Running Sparse-RS Attack"):
+        result = process_single_image(args)
+        results.append(result)
     
     # 결과 수집 및 정리
     img_list = []
@@ -382,7 +378,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_images', type=int, default=100, help='Number of images to evaluate from the dataset.')
     parser.add_argument('--iters', type=int, default=500, help='Number of iterations for RSAttack.')
     parser.add_argument('--num_processes', type=int, default=1, help='Number of processes for parallel processing.')
-    parser.add_argument('--use_decision_loss', type=str, default='True', choices=['True', 'False'], help='Whether to use decision loss.')
+    parser.add_argument('--use_decision_loss', type=str, default='False', choices=['True', 'False'], help='Whether to use decision loss.')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output.')
     args = parser.parse_args()
 
