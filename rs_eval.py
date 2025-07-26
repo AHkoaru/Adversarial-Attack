@@ -75,7 +75,7 @@ def process_single_image(args):
     attack = RSAttack(
         model=model,
         cfg=config, # Pass the simplified config for RSAttack internal use
-        norm='L0', # or 'patches'
+        norm=config["norm"], # or 'patches'
         n_queries=config["n_queries"],
         eps=config["eps"], # For L0, this is number of pixels. For patches, it's area.
         p_init=config["p_init"],
@@ -96,10 +96,12 @@ def process_single_image(args):
     total_queries = config["iters"] * config["n_queries"]
     save_steps = [int(total_queries * (i+1) / 5) for i in range(5)]
     current_queries = 0
-    
+    print(f"save_steps: {save_steps}")
     for iter_idx in range(config["iters"]):
         current_query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
-        img_tensor_bgr = adv_img_bgr  # 다음 iteration을 위해 업데이트
+        img_tensor_bgr = adv_img_bgr
+        print(f"current_query: {current_query}")
+        # 다음 iteration을 위해 업데이트
         if current_query in save_steps:
             print(f"save_query: {current_query}")
             adv_img_bgr_list.append(adv_img_bgr)
@@ -376,10 +378,11 @@ if __name__ == '__main__':
     parser.add_argument('--p_init', type=float, default=0.8, help='Initial probability p_init for RSAttack.')
     parser.add_argument('--n_restarts', type=int, default=1, help='Number of restarts for RSAttack.')
     parser.add_argument('--num_images', type=int, default=100, help='Number of images to evaluate from the dataset.')
-    parser.add_argument('--iters', type=int, default=500, help='Number of iterations for RSAttack.')
+    parser.add_argument('--iters', type=int, default=100, help='Number of iterations for RSAttack.')
     parser.add_argument('--num_processes', type=int, default=1, help='Number of processes for parallel processing.')
     parser.add_argument('--use_decision_loss', type=str, default='False', choices=['True', 'False'], help='Whether to use decision loss.')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output.')
+    parser.add_argument('--norm', type=str, default='L0', choices=['L0', 'patches'], help='Norm for RSAttack.')
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -396,4 +399,5 @@ if __name__ == '__main__':
     config["base_dir"] = f"./data/{config['attack_method']}/results/{config['dataset']}/{config['model']}"
     config["use_decision_loss"] = args.use_decision_loss.lower() == 'true'  # 문자열을 boolean으로 변환
     config["verbose"] = args.verbose
+    config["norm"] = args.norm
     main(config)

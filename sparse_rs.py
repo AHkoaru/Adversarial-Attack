@@ -118,7 +118,7 @@ class RSAttack():
     def margin_and_loss(self, img, final_mask, first_img_pred_labels):
         adv_result = inference_model(self.model, img.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
 
-        adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
+        adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (Class, H, W)
         # margin 기반 loss로 변경
         # final_mask: (Class, H, W) - 정답 위치 True
         # 1. 정답 클래스 인덱스 맵 (H, W)
@@ -127,7 +127,7 @@ class RSAttack():
         correct_logits = adv_logits.gather(0, gt_indices.unsqueeze(0)).squeeze(0)  # (H, W)
         # 3. 정답이 아닌 클래스의 로짓 중 최대값
         adv_logits_clone = adv_logits.clone()
-        # (C, H, W)에서 정답 위치에 -inf를 넣어줌
+        # (Class, H, W)에서 정답 위치에 -inf를 넣어줌
         h, w = adv_logits.shape[1], adv_logits.shape[2]
         adv_logits_clone[gt_indices, torch.arange(h).unsqueeze(1).expand(h, w), torch.arange(w).expand(h, w)] = float('-inf')
         max_wrong_logits, _ = adv_logits_clone.max(dim=0)  # (H, W)
@@ -322,7 +322,7 @@ class RSAttack():
 
             if self.norm == 'L0':
                 eps = int(self.eps * h * w)
-                original_img = img.clone()
+                # original_img = img.clone()
 
                 x_best = img.clone()
                 n_pixels = h * w
@@ -352,7 +352,7 @@ class RSAttack():
                     for img_idx in range(x_new.shape[0]):
                         p_set = b_all[img_idx, ind_p]
                         np_set = be_all[img_idx, ind_np]
-                        x_new[img_idx, :, p_set // w, p_set % w] = original_img[img_idx, :, p_set // w, p_set % w].clone()
+                        x_new[img_idx, :, p_set // w, p_set % w] = adv[img_idx, :, p_set // w, p_set % w].clone()
                         if eps_it > 1:
                             x_new[img_idx, :, np_set // w, np_set % w] = self.random_choice([c, eps_it]).clamp(0., 1.)
                         else:
@@ -418,144 +418,135 @@ class RSAttack():
                     self.previous_best_img = x_best.clone()
                     self.previous_best_loss = loss_min
                     self.previous_best_changed_pixels = best_changed_pixels
-                    print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min:.4f}')
+                    print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min.item():.4f}')
 
             elif self.norm == 'patches':
-                ''' assumes square images and patches '''
+                ''' 
+                Attack with a variable number of 2x2 patches.
+                - self.eps defines the total patch area as a ratio of the image size.
+                - The number of patches to modify decreases with each iteration.
+                '''
                 
-                s = int(math.ceil(self.eps ** .5))
-                x_best = x.clone()
-                x_new = x.clone()
-                loc = torch.randint(h - s, size=[x.shape[0], 2])
-                patches_coll = torch.zeros([x.shape[0], c, s, s]).to(self.device)
-                assert abs(self.update_loc_period) > 1
-                loc_t = abs(self.update_loc_period)
-                
-                # set when to start single channel updates
-                it_start_cu = None
-                for it in range(0, self.n_queries):
-                    s_it = int(max(self.p_selection(it) ** .5 * s, 1))
-                    if s_it == 1:
-                        break
-                it_start_cu = it + (self.n_queries - it) // 2
-                if self.verbose:
-                    self.logger.log('starting single channel updates at query {}'.format(
-                        it_start_cu))
-                    
-                # initialize patches
-                if self.verbose:
-                    self.logger.log('using {} initialization'.format(self.init_patches))
-                for counter in range(x.shape[0]):
-                    patches_coll[counter] += self.get_init_patch(c, s).squeeze().clamp(0., 1.)
-                    x_new[counter, :, loc[counter, 0]:loc[counter, 0] + s,
-                        loc[counter, 1]:loc[counter, 1] + s] = patches_coll[counter].clone()
-        
-                margin_min, loss_min = self.margin_and_loss(x_new, y)
-                n_queries = torch.ones(x.shape[0]).to(self.device)
-        
-                for it in range(1, self.n_queries):
-                    # check points still to fool
-                    idx_to_fool = (margin_min > -1e-6).nonzero().squeeze()
-                    x_curr = self.check_shape(x[idx_to_fool])
-                    patches_curr = self.check_shape(patches_coll[idx_to_fool])
-                    y_curr = y[idx_to_fool]
-                    margin_min_curr = margin_min[idx_to_fool]
-                    loss_min_curr = loss_min[idx_to_fool]
-                    loc_curr = loc[idx_to_fool]
-                    if len(y_curr.shape) == 0:
-                        y_curr.unsqueeze_(0)
-                        margin_min_curr.unsqueeze_(0)
-                        loss_min_curr.unsqueeze_(0)
-                        
-                        loc_curr.unsqueeze_(0)
-                        idx_to_fool.unsqueeze_(0)
-        
-                    # sample update
-                    s_it = int(max(self.p_selection(it) ** .5 * s, 1))
-                    p_it = torch.randint(s - s_it + 1, size=[2])
-                    sh_it = int(max(self.sh_selection(it) * h, 0))
-                    patches_new = patches_curr.clone()
-                    x_new = x_curr.clone()
-                    loc_new = loc_curr.clone()
-                    update_loc = int((it % loc_t == 0) and (sh_it > 0))
-                    update_patch = 1. - update_loc
-                    if self.update_loc_period < 0 and sh_it > 0:
-                        update_loc = 1. - update_loc
-                        update_patch = 1. - update_patch
-                    for counter in range(x_curr.shape[0]):
-                        if update_patch == 1.:
-                            # update patch
-                            if it < it_start_cu:
-                                if s_it > 1:
-                                    patches_new[counter, :, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] += self.random_choice([c, 1, 1])
-                                else:
-                                    # make sure to sample a different color
-                                    old_clr = patches_new[counter, :, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it].clone()
-                                    new_clr = old_clr.clone()
-                                    while (new_clr == old_clr).all().item():
-                                        new_clr = self.random_choice([c, 1, 1]).clone().clamp(0., 1.)
-                                    patches_new[counter, :, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] = new_clr.clone()
-                            else:
-                                assert s_it == 1
-                                assert it >= it_start_cu
-                                # single channel updates
-                                new_ch = self.random_int(low=0, high=3, shape=[1])
-                                patches_new[counter, new_ch, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] = 1. - patches_new[
-                                    counter, new_ch, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it]
-                                
-                            patches_new[counter].clamp_(0., 1.)
-                        if update_loc == 1:
-                            # update location
-                            loc_new[counter] += (torch.randint(low=-sh_it, high=sh_it + 1, size=[2]))
-                            loc_new[counter].clamp_(0, h - s)
-                        
-                        x_new[counter, :, loc_new[counter, 0]:loc_new[counter, 0] + s,
-                            loc_new[counter, 1]:loc_new[counter, 1] + s] = patches_new[counter].clone()
-                    
-                    # check loss of new candidate
-                    margin, loss = self.margin_and_loss(x_new, y_curr)
-                    n_queries[idx_to_fool]+= 1
-        
-                    # update best solution
-                    idx_improved = (loss < loss_min_curr).float()
-                    idx_to_update = (idx_improved > 0.).nonzero().squeeze()
-                    loss_min[idx_to_fool[idx_to_update]] = loss[idx_to_update]
-        
-                    idx_miscl = (margin < -1e-6).float()
-                    idx_improved = torch.max(idx_improved, idx_miscl)
-                    nimpr = idx_improved.sum().item()
-                    if nimpr > 0.:
-                        idx_improved = (idx_improved.view(-1) > 0).nonzero().squeeze()
-                        margin_min[idx_to_fool[idx_improved]] = margin[idx_improved].clone()
-                        patches_coll[idx_to_fool[idx_improved]] = patches_new[idx_improved].clone()
-                        loc[idx_to_fool[idx_improved]] = loc_new[idx_improved].clone()
-                        
-                    # log results current iteration
-                    ind_succ = (margin_min <= 0.).nonzero().squeeze()
-                    if self.verbose and ind_succ.numel() != 0:
-                        self.logger.log(' '.join(['{}'.format(it + 1),
-                            '- success rate={}/{} ({:.2%})'.format(
-                            ind_succ.numel(), n_ex_total,
-                            float(ind_succ.numel()) / n_ex_total),
-                            '- avg # queries={:.1f}'.format(
-                            n_queries[ind_succ].mean().item()),
-                            '- med # queries={:.1f}'.format(
-                            n_queries[ind_succ].median().item()),
-                            '- loss={:.3f}'.format(loss_min.mean()),
-                            '- max pert={:.0f}'.format(((x_new - x_curr).abs() > 0
-                            ).max(1)[0].view(x_new.shape[0], -1).sum(-1).max()),
-                            #'- sit={:.0f} - sh={:.0f}'.format(s_it, sh_it),
-                            '{}'.format(' - loc' if update_loc == 1. else ''),
-                            ]))
+                s = 2  # 패치 크기를 2x2로 고정
+                adv = img.clone()
 
-                    if ind_succ.numel() == n_ex_total:
-                        break
-        
-                # apply patches
-                for counter in range(x.shape[0]):
-                    x_best[counter, :, loc[counter, 0]:loc[counter, 0] + s,
-                        loc[counter, 1]:loc[counter, 1] + s] = patches_coll[counter].clone()
-        
+                # --- eps를 기반으로 총 패치 개수 계산 ---
+                n_pixels_to_change = int(h * w * self.eps)
+                # 2x2 패치의 면적(4)으로 나누어 총 패치 개수를 계산
+                n_patches = (n_pixels_to_change // (s * s)) // 100
+                # print(f"n_patches: {n_patches}")
+                if n_patches == 0:
+                    print(f"Warning: eps={self.eps} is too small to create any 2x2 patches. Returning original image.")
+                    return self.current_query, img, torch.zeros_like(img)
+
+                # --- 여러 개의 패치와 위치를 초기화 ---
+                patches_coll = torch.zeros(n_patches, c, s, s, device=self.device)
+                locs_coll = torch.zeros(n_patches, 2, dtype=torch.long, device=self.device)
+                for i in range(n_patches):
+                    locs_coll[i, 0] = torch.randint(0, h - s + 1, size=(1,), device=self.device)
+                    locs_coll[i, 1] = torch.randint(0, w - s + 1, size=(1,), device=self.device)
+                    patches_coll[i] = self.get_init_patch(c, s).squeeze(0).to(self.device)
+
+                # 초기 x_best 이미지를 모든 패치를 적용하여 생성
+                x_best = adv.clone()
+                for i in range(n_patches):
+                    loc = locs_coll[i]
+                    patch = patches_coll[i]
+                    x_best[0, :, loc[0]:loc[0] + s, loc[1]:loc[1] + s] = patch
+                
+                loc_t = abs(self.update_loc_period)
+                it_start_cu = None # 단일 채널 업데이트는 2x2 패치에서는 큰 의미가 없으므로 비활성화
+                
+                # --- 초기 loss 계산 ---
+                loss_min_np, current_changed_pixels, initial_decision_loss = self.margin_and_loss(x_best, final_mask, first_img_pred_labels)
+                loss_min = loss_min_np.item()
+                best_changed_pixels = current_changed_pixels
+                best_decision_loss = initial_decision_loss
+                self.current_query += 1
+
+                # --- 메인 공격 루프 ---
+                for it in range(1, self.n_queries):
+                    patches_new_coll = patches_coll.clone()
+                    locs_new_coll = locs_coll.clone()
+                    
+                    # --- 이번 턴에 수정할 패치의 개수와 인덱스를 결정 ---
+                    # 총 패치 개수를 100으로 나눈 만큼만 매번 수정
+                    n_patches_to_change_it = max(n_patches // 100, 1)
+                    patch_indices_to_change = torch.randperm(n_patches)[:n_patches_to_change_it]
+
+                    sh_it = int(max(self.sh_selection(it) * h, 0))
+                    update_loc = int((it % loc_t == 0) and (sh_it > 0))
+                    update_patch = 1 - update_loc
+                    
+                    # --- 선택된 패치들만 수정 ---
+                    for i in patch_indices_to_change:
+                        if update_patch == 1:
+                            # 2x2 패치이므로, 전체를 새로운 색으로 바꿈
+                            patch_to_change = patches_new_coll[i]
+                            patch_to_change = self.random_choice([c, 1, 1])
+                            patch_to_change.clamp_(0., 1.)
+
+                        if update_loc == 1:
+                            loc_to_change = locs_new_coll[i]
+                            loc_to_change += torch.randint(low=-sh_it, high=sh_it + 1, size=(2,), device=self.device)
+                            loc_to_change[0].clamp_(0, h - s)
+                            loc_to_change[1].clamp_(0, w - s)
+                    
+                    # --- 깨끗한 원본 이미지에 모든 새 패치를 적용하여 새 후보 이미지 생성 ---
+                    x_new = adv.clone()
+                    for i in range(n_patches):
+                        loc = locs_new_coll[i]
+                        patch = patches_new_coll[i]
+                        x_new[0, :, loc[0]:loc[0] + s, loc[1]:loc[1] + s] = patch
+
+                    loss_new, current_changed_pixels, decision_loss_value = self.margin_and_loss(x_new, final_mask, first_img_pred_labels)
+                    self.current_query += 1
+                    
+                    # --- 새 후보가 더 좋으면 최적의 상태를 업데이트 ---
+                    if loss_new < loss_min:
+                        loss_min = loss_new
+                        patches_coll = patches_new_coll.clone()
+                        locs_coll = locs_new_coll.clone()
+                        best_changed_pixels = current_changed_pixels
+                        best_decision_loss = decision_loss_value
+
+                # --- 찾은 최적의 패치/위치로부터 최종 공격 이미지 생성 ---
+                x_best = adv.clone()
+                for i in range(n_patches):
+                    loc = locs_coll[i]
+                    patch = patches_coll[i]
+                    x_best[0, :, loc[0]:loc[0] + s, loc[1]:loc[1] + s] = patch
+
+                # 현재 iteration의 결과를 이전 상태와 비교
+                if self.use_decision_loss:
+                    # decision_loss 사용 시: best_decision_loss가 음수면 업데이트
+                    if best_decision_loss is not None:
+                        should_update_iteration = best_decision_loss < 0
+                        if self.verbose:
+                            print(f'Decision loss check: {best_decision_loss:.4f} {"< 0 (update)" if should_update_iteration else ">= 0 (no update)"}')
+                    else:
+                        should_update_iteration = True  # 첫 번째 iteration
+                else:
+                    # decision_loss 미사용 시: previous_best_loss보다 작으면 업데이트
+                    should_update_iteration = loss_min < self.previous_best_loss
+                    if self.verbose:
+                        print(f'Loss check: {loss_min:.4f} {"< " if should_update_iteration else ">= "}{self.previous_best_loss:.4f}')
+                
+                if iteration_start_loss != float('inf') and not should_update_iteration:
+                    # 개선되지 않았으므로 이전 이미지 반환
+                    if self.verbose:
+                        print(f'No improvement: returning previous best image')
+                    return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
+                else:
+                    # 개선되었으므로 현재 상태를 이전 상태로 저장
+                    self.previous_best_img = x_best.clone()
+                    self.previous_best_loss = loss_min
+                    self.previous_best_changed_pixels = best_changed_pixels
+                    if self.verbose:
+                        print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min:.4f}')
+                
+                return self.current_query, x_best, best_changed_pixels
+
             elif self.norm == 'patches_universal':
                 ''' assumes square images and patches '''
                 
@@ -563,7 +554,7 @@ class RSAttack():
                 x_best = x.clone()
                 self.n_imgs = x.shape[0]
                 x_new = x.clone()
-                loc = torch.randint(h - s + 1, size=[x.shape[0], 2])
+                loc = torch.randint(h - s + 1, size=[x.shape[0], 2], device=self.device)
                 
                 # set when to start single channel updates
                 it_start_cu = None
@@ -607,7 +598,7 @@ class RSAttack():
                 for it in range(it_init, n_iter):
                     # sample size and location of the update
                     s_it = int(max(self.p_selection(it) ** .5 * s, 1))
-                    p_it = torch.randint(s - s_it + 1, size=[2])
+                    p_it = torch.randint(s - s_it + 1, size=[2], device=self.device)
                     
                     patch_new = patch_univ.clone()
                     
@@ -659,7 +650,7 @@ class RSAttack():
                         x = torch.cat(new_batch, dim=0)
                         assert x.shape[0] == self.n_imgs
                         
-                        loc = torch.randint(h - s + 1, size=[self.n_imgs, 2])
+                        loc = torch.randint(h - s + 1, size=[self.n_imgs, 2], device=self.device)
                         assert loc.shape == (self.n_imgs, 2)
                         
                         loss_batch = loss_batch * 0. + 1e6
@@ -802,7 +793,38 @@ class RSAttack():
 
                     if ind_succ.numel() == n_ex_total:
                         break
-                    
+        
+                # x_best가 루프 안에서 항상 업데이트되므로 아래 코드는 불필요
+                # # apply patches
+                # for counter in range(x_best.shape[0]):
+                #     x_best[counter, :, loc[counter, 0]:loc[counter, 0] + s,
+                #         loc[counter, 1]:loc[counter, 1] + s] = patches_coll[counter].clone()
+        
+                # 현재 iteration의 결과를 이전 상태와 비교
+                if self.use_decision_loss:
+                    # decision_loss 사용 시: best_decision_loss가 음수면 업데이트
+                    if best_decision_loss is not None:
+                        should_update_iteration = best_decision_loss < 0
+                        if self.verbose:
+                            print(f'Decision loss check: {best_decision_loss:.4f} {"< 0 (update)" if should_update_iteration else ">= 0 (no update)"}')
+                    else:
+                        should_update_iteration = True  # 첫 번째 iteration
+                else:
+                    # decision_loss 미사용 시: previous_best_loss보다 작으면 업데이트
+                    should_update_iteration = loss_min < self.previous_best_loss
+                    if self.verbose:
+                        print(f'Loss check: {loss_min:.4f} {"< " if should_update_iteration else ">= "}{self.previous_best_loss:.4f}')
+                
+                if iteration_start_loss != float('inf') and not should_update_iteration:
+                    # 개선되지 않았으므로 이전 이미지 반환
+                    print(f'No improvement: returning previous best image')
+                    return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
+                else:
+                    # 개선되었으므로 현재 상태를 이전 상태로 저장
+                    self.previous_best_img = x_best.clone()
+                    self.previous_best_loss = loss_min
+                    self.previous_best_changed_pixels = best_changed_pixels
+                    print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min:.4f}')
 
             elif self.norm == 'frames_universal':
                 # set width and indices of frames
