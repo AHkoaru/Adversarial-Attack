@@ -96,11 +96,11 @@ def process_single_image(args):
     total_queries = config["iters"] * config["n_queries"]
     save_steps = [int(total_queries * (i+1) / 5) for i in range(5)]
     current_queries = 0
-    print(f"save_steps: {save_steps}")
+    # print(f"save_steps: {save_steps}")
     for iter_idx in range(config["iters"]):
         current_query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
         img_tensor_bgr = adv_img_bgr
-        print(f"current_query: {current_query}")
+        # print(f"current_query: {current_query}")
         # 다음 iteration을 위해 업데이트
         if current_query in save_steps:
             print(f"save_query: {current_query}")

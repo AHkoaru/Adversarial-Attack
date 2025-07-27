@@ -69,7 +69,7 @@ class RSAttack():
             device=None,
             log_path=None,
             constant_schedule=False,
-            init_patches='random_squares',
+            init_patches='random',
             resample_loc=None,
             data_loader=None,
             update_loc_period=None,
@@ -423,28 +423,26 @@ class RSAttack():
             elif self.norm == 'patches':
                 ''' 
                 Attack with a variable number of 2x2 patches.
-                - self.eps defines the total patch area as a ratio of the image size.
-                - The number of patches to modify decreases with each iteration.
+                - 원본 코드의 색상 처리 방식 적용
                 '''
                 
-                s = 2  # 패치 크기를 2x2로 고정
+                s = 2  # 패치 크기를 2x2로 고정 (유지)
                 adv = img.clone()
 
-                # --- eps를 기반으로 총 패치 개수 계산 ---
+                # --- eps를 기반으로 총 패치 개수 계산 (유지) ---
                 n_pixels_to_change = int(h * w * self.eps)
-                # 2x2 패치의 면적(4)으로 나누어 총 패치 개수를 계산
                 n_patches = (n_pixels_to_change // (s * s)) // 100
-                # print(f"n_patches: {n_patches}")
                 if n_patches == 0:
                     print(f"Warning: eps={self.eps} is too small to create any 2x2 patches. Returning original image.")
                     return self.current_query, img, torch.zeros_like(img)
 
-                # --- 여러 개의 패치와 위치를 초기화 ---
+                # --- 여러 개의 패치와 위치를 초기화 (유지) ---
                 patches_coll = torch.zeros(n_patches, c, s, s, device=self.device)
                 locs_coll = torch.zeros(n_patches, 2, dtype=torch.long, device=self.device)
                 for i in range(n_patches):
                     locs_coll[i, 0] = torch.randint(0, h - s + 1, size=(1,), device=self.device)
                     locs_coll[i, 1] = torch.randint(0, w - s + 1, size=(1,), device=self.device)
+                    # 원본 코드 방식으로 초기화
                     patches_coll[i] = self.get_init_patch(c, s).squeeze(0).to(self.device)
 
                 # 초기 x_best 이미지를 모든 패치를 적용하여 생성
@@ -455,7 +453,15 @@ class RSAttack():
                     x_best[0, :, loc[0]:loc[0] + s, loc[1]:loc[1] + s] = patch
                 
                 loc_t = abs(self.update_loc_period)
-                it_start_cu = None # 단일 채널 업데이트는 2x2 패치에서는 큰 의미가 없으므로 비활성화
+                # single channel update 시작 시점 계산 (원본 코드 방식)
+                it_start_cu = None
+                for it in range(0, self.n_queries):
+                    s_it = int(max(self.p_selection(it) ** .5 * s, 1))
+                    if s_it == 1:
+                        break
+                it_start_cu = it + (self.n_queries - it) // 2
+                if self.verbose:
+                    print(f'starting single channel updates at query {it_start_cu}')
                 
                 # --- 초기 loss 계산 ---
                 loss_min_np, current_changed_pixels, initial_decision_loss = self.margin_and_loss(x_best, final_mask, first_img_pred_labels)
@@ -470,21 +476,41 @@ class RSAttack():
                     locs_new_coll = locs_coll.clone()
                     
                     # --- 이번 턴에 수정할 패치의 개수와 인덱스를 결정 ---
-                    # 총 패치 개수를 100으로 나눈 만큼만 매번 수정
-                    n_patches_to_change_it = max(n_patches // 100, 1)
+                    n_patches_to_change_it = max(n_patches, 1)
                     patch_indices_to_change = torch.randperm(n_patches)[:n_patches_to_change_it]
 
+                    # 원본 코드의 update 방식
+                    s_it = int(max(self.p_selection(it) ** .5 * s, 1))
+                    p_it = torch.randint(s - s_it + 1, size=[2], device=self.device)
                     sh_it = int(max(self.sh_selection(it) * h, 0))
                     update_loc = int((it % loc_t == 0) and (sh_it > 0))
-                    update_patch = 1 - update_loc
+                    update_patch = 1. - update_loc
+                    if self.update_loc_period < 0 and sh_it > 0:
+                        update_loc = 1. - update_loc
+                        update_patch = 1. - update_patch
                     
-                    # --- 선택된 패치들만 수정 ---
+                    # --- 선택된 패치들만 수정 (원본 코드 방식) ---
                     for i in patch_indices_to_change:
-                        if update_patch == 1:
-                            # 2x2 패치이므로, 전체를 새로운 색으로 바꿈
-                            patch_to_change = patches_new_coll[i]
-                            patch_to_change = self.random_choice([c, 1, 1])
-                            patch_to_change.clamp_(0., 1.)
+                        if update_patch == 1.:
+                            # update patch (원본 코드 방식)
+                            if it < it_start_cu:
+                                if s_it > 1:
+                                    patches_new_coll[i][:, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] += self.random_choice([c, 1, 1])
+                                else:
+                                    # make sure to sample a different color (원본 코드)
+                                    old_clr = patches_new_coll[i][:, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it].clone()
+                                    new_clr = old_clr.clone()
+                                    while (new_clr == old_clr).all().item():
+                                        new_clr = self.random_choice([c, 1, 1]).clone().clamp(0., 1.)
+                                    patches_new_coll[i][:, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] = new_clr.clone()
+                            else:
+                                assert s_it == 1
+                                assert it >= it_start_cu
+                                # single channel updates (원본 코드)
+                                new_ch = self.random_int(low=0, high=3, shape=[1])
+                                patches_new_coll[i][new_ch, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] = 1. - patches_new_coll[i][new_ch, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it]
+                                
+                            patches_new_coll[i].clamp_(0., 1.)
 
                         if update_loc == 1:
                             loc_to_change = locs_new_coll[i]
