@@ -93,6 +93,29 @@ CITYSCAPES_COLORMAP = {
     18: (119, 11, 32)     # bicycle
 }
 
+def _generate_voc_colormap(N=256):
+    """Generate Pascal VOC colormap using the standard algorithm."""
+    def bitget(byteval, idx):
+        return ((byteval & (1 << idx)) != 0)
+    
+    cmap = np.zeros((N, 3), dtype=np.uint8)
+    for i in range(N):
+        r = g = b = 0
+        c = i
+        for j in range(8):
+            r = r | (bitget(c, 0) << 7-j)
+            g = g | (bitget(c, 1) << 7-j)
+            b = b | (bitget(c, 2) << 7-j)
+            c = c >> 3
+        cmap[i] = np.array([r, g, b])
+    return cmap
+
+# Generate VOC2012 colormap for 21 classes
+_voc_colors = _generate_voc_colormap(256)
+VOC2012_COLORMAP = {}
+for i in range(21):  # 21 classes in VOC2012 (including background)
+    VOC2012_COLORMAP[i] = tuple(_voc_colors[i])
+
 ADE20K_COLORMAP = {
     0: (0, 0, 0),            # background / unlabeled
     1: (120, 120, 120),      # wall
@@ -272,6 +295,9 @@ def visualize_segmentation(image: np.ndarray, pred_mask: np.ndarray, save_path: 
             colored_mask[pred_mask == class_idx] = color
     elif dataset == "ade20k":
         for class_idx, color in ADE20K_COLORMAP.items():
+            colored_mask[pred_mask == class_idx] = color
+    elif dataset == "VOC2012":
+        for class_idx, color in VOC2012_COLORMAP.items():
             colored_mask[pred_mask == class_idx] = color
 
     # Create overlay image (RGB format)

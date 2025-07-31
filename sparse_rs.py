@@ -423,7 +423,6 @@ class RSAttack():
             elif self.norm == 'patches':
                 ''' 
                 Attack with a variable number of 2x2 patches.
-                - 원본 코드의 색상 처리 방식 적용
                 '''
                 
                 s = 2  # 패치 크기를 2x2로 고정 (유지)
@@ -1029,6 +1028,11 @@ class RSAttack():
                 elif self.cfg['dataset'] == 'ade20k':
                     # ADE20k: gt에서 0번 클래스인 픽셀 무시
                     valid_gt_mask = gt != 0
+                elif self.cfg['dataset'] == 'VOC2012':
+                    # VOC2012: gt에서 255인 픽셀 무시 (배경은 0번 클래스)
+                    valid_gt_mask = gt != 0
+                else:
+                    raise ValueError(f"Unsupported dataset: {self.cfg['dataset']}")
 
                 correct_masked_pred_labels = torch.where(valid_gt_mask, first_img_pred_labels, ignore_index)
 

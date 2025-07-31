@@ -53,6 +53,19 @@ def eval_miou(model, dataset, adv_examples, gt_images, config):
             ignore_index=255,
             reduce_labels=True,
             )
+    elif config["dataset"] == "VOC2012":
+        benign_to_adv_miou = miou.compute(predictions=adv_predictions,
+            references=benign_predictions,
+            num_labels=config["num_class"],
+            ignore_index=255,
+            reduce_labels=False,
+            )
+        gt_to_adv_miou = miou.compute(predictions=adv_predictions,
+            references=gt_images,
+            num_labels=config["num_class"],
+            ignore_index=255,
+            reduce_labels=False,
+            )
     return benign_to_adv_miou, gt_to_adv_miou
 
 

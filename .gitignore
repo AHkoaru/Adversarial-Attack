@@ -120,4 +120,5 @@ mmseg/.mim
 *.pth
 
 plots/
-test.sh
+*.sh
+*.pdf

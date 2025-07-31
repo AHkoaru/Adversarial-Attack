@@ -12,7 +12,7 @@ from functools import partial
 mp.set_start_method('spawn', force=True)
 
 from mmseg.apis import init_model, inference_model
-from dataset import CitySet, ADESet # main.py에서 사용된 데이터셋 클래스
+from dataset import CitySet, ADESet, VOCSet # main.py에서 사용된 데이터셋 클래스
 from sparse_rs import RSAttack # sparse-rs.py의 공격 클래스
 
 from function import *
@@ -230,6 +230,16 @@ def main(config):
                 "config": 'configs/setr/setr_vit-l_pup_8xb2-160k_ade20k-512x512.py',
                 "checkpoint": 'ckpt/setr_pup_512x512_160k_b16_ade20k_20210619_191343-7e0ce826.pth'
             }
+        },
+        "VOC2012": {
+            "deeplabv3": {
+                "config": 'configs/deeplabv3/deeplabv3_r101-d8_4xb4-20k_voc12aug-512x512.py',
+                "checkpoint": 'ckpt/deeplabv3_r101-d8_512x512_20k_voc12aug_20200617_010932-8d13832f.pth'
+            },
+            "pspnet": {
+                "config": 'configs/pspnet/pspnet_r101-d8_4xb4-40k_voc12aug-512x512.py',
+                "checkpoint": 'ckpt/pspnet_r101-d8_512x512_20k_voc12aug_20200617_102003-4aef3c9a.pth'
+            }
         }
     }
 
@@ -248,6 +258,8 @@ def main(config):
         dataset = CitySet(dataset_dir=config["data_dir"])
     elif config["dataset"] == "ade20k":
         dataset = ADESet(dataset_dir=config["data_dir"])
+    elif config["dataset"] == "VOC2012":
+        dataset = VOCSet(dataset_dir=config["data_dir"])
     else:
         raise ValueError(f"Unsupported dataset: {config['dataset']}")
     
@@ -378,7 +390,7 @@ if __name__ == '__main__':
     parser.add_argument('--p_init', type=float, default=0.8, help='Initial probability p_init for RSAttack.')
     parser.add_argument('--n_restarts', type=int, default=1, help='Number of restarts for RSAttack.')
     parser.add_argument('--num_images', type=int, default=100, help='Number of images to evaluate from the dataset.')
-    parser.add_argument('--iters', type=int, default=100, help='Number of iterations for RSAttack.')
+    parser.add_argument('--iters', type=int, default=500, help='Number of iterations for RSAttack.')
     parser.add_argument('--num_processes', type=int, default=1, help='Number of processes for parallel processing.')
     parser.add_argument('--use_decision_loss', type=str, default='False', choices=['True', 'False'], help='Whether to use decision loss.')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output.')
