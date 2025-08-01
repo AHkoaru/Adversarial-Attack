@@ -466,13 +466,18 @@ class Pixle():
             # 예측이 맞은 픽셀만 선택
             condition_mask = torch.ones_like(original_pred_labels, dtype=torch.bool)
 
-            #gt를 사용해 배경 제거
+            #gt를 사용해 ignore 픽셀 제거
             if self.cfg['dataset'] == 'cityscapes':
                 # Cityscapes: gt에서 255인 픽셀 무시
                 valid_gt_mask = gt != 255
             elif self.cfg['dataset'] == 'ade20k':
-                # ADE20k: gt에서 0번 클래스인 픽셀 무시
+                # ADE20k: gt에서 0번 클래스인 픽셀 무시 (ADE20K에서 0이 ignore_index)
                 valid_gt_mask = gt != 0
+            elif self.cfg['dataset'] == 'VOC2012':
+                # VOC2012: gt에서 255인 픽셀 무시 (255가 ignore_index, 0은 유효한 배경 클래스)
+                valid_gt_mask = gt != 255
+            else:
+                raise ValueError(f"Unsupported dataset: {self.cfg['dataset']}")
 
             correct_masked_pred_labels = torch.where(valid_gt_mask, original_pred_labels, ignore_index)
 
