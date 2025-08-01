@@ -133,7 +133,9 @@ class RSAttack():
         max_wrong_logits, _ = adv_logits_clone.max(dim=0)  # (H, W)
         # 4. margin 계산
         margin = correct_logits - max_wrong_logits  # (H, W)
-        loss_val = margin.mean()
+        # 배경 픽셀들은 loss 계산에서 제외
+        valid_pixel_mask = final_mask.any(dim=0)
+        loss_val = margin[valid_pixel_mask].mean()
         
         if self.use_decision_loss is False:
             if self.verbose is True:
@@ -188,6 +190,13 @@ class RSAttack():
     def random_choice(self, shape):
         t = 2 * torch.rand(shape).to(self.device) - 1
         return torch.sign(t)
+
+    def random_choice_255(self, shape):
+        """0 또는 255 값을 랜덤하게 생성하는 함수"""
+        t = 2 * torch.rand(shape).to(self.device) - 1
+        binary_values = torch.sign(t)
+        # 0 또는 255 값으로 변환 (-1 -> 0, +1 -> 255)
+        return torch.where(binary_values > 0, 255.0, 0.0)
 
     def random_int(self, low=0, high=1, shape=[1]):
         t = low + (high - low) * torch.rand(shape).to(self.device)
@@ -287,12 +296,12 @@ class RSAttack():
     def get_init_patch(self, c, s, n_iter=1000):
         if self.init_patches == 'stripes':
             patch_univ = torch.zeros([1, c, s, s]).to(self.device) + self.random_choice(
-                [1, c, 1, s]).clamp(0., 1.)
+                [1, c, 1, s]).clamp(0., 255.)
         elif self.init_patches == 'uniform':
             patch_univ = torch.zeros([1, c, s, s]).to(self.device) + self.random_choice(
-                [1, c, 1, 1]).clamp(0., 1.)
+                [1, c, 1, 1]).clamp(0., 255.)
         elif self.init_patches == 'random':
-            patch_univ = self.random_choice([1, c, s, s]).clamp(0., 1.)
+            patch_univ = self.random_choice([1, c, s, s]).clamp(0., 255.)
         elif self.init_patches == 'random_squares':
             patch_univ = torch.zeros([1, c, s, s]).to(self.device)
             for _ in range(n_iter):
@@ -300,11 +309,11 @@ class RSAttack():
                 loc_init = torch.randint(s - size_init + 1, size=[2])
                 patch_univ[0, :, loc_init[0]:loc_init[0] + size_init, loc_init[1]:loc_init[1] + size_init] = 0.
                 patch_univ[0, :, loc_init[0]:loc_init[0] + size_init, loc_init[1]:loc_init[1] + size_init
-                    ] += self.random_choice([c, 1, 1]).clamp(0., 1.)
+                    ] += self.random_choice([c, 1, 1]).clamp(0., 255.)
         elif self.init_patches == 'sh':
             patch_univ = torch.ones([1, c, s, s]).to(self.device)
         
-        return patch_univ.clamp(0., 1.)
+        return patch_univ.clamp(0., 255.)
 
     def attack_single_run(self, img, gt, final_mask, first_img_pred_labels):
         with torch.no_grad():
@@ -331,7 +340,7 @@ class RSAttack():
                     ind_all = torch.randperm(n_pixels)
                     ind_p = ind_all[:eps]
                     ind_np = ind_all[eps:]
-                    x_best[img_idx, :, ind_p // w, ind_p % w] = self.random_choice([c, eps]).clamp(0., 1.)
+                    x_best[img_idx, :, ind_p // w, ind_p % w] = self.random_choice_255([c, eps]).clamp(0., 255.)
                     b_all[img_idx] = ind_p.clone()
                     be_all[img_idx] = ind_np.clone()
                     
@@ -354,14 +363,14 @@ class RSAttack():
                         np_set = be_all[img_idx, ind_np]
                         x_new[img_idx, :, p_set // w, p_set % w] = adv[img_idx, :, p_set // w, p_set % w].clone()
                         if eps_it > 1:
-                            x_new[img_idx, :, np_set // w, np_set % w] = self.random_choice([c, eps_it]).clamp(0., 1.)
+                            x_new[img_idx, :, np_set // w, np_set % w] = self.random_choice_255([c, eps_it]).clamp(0., 255.)
                         else:
                             # if update is 1x1 make sure the sampled color is different from the current one
                             old_clr = x_new[img_idx, :, np_set // w, np_set % w].clone()
                             assert old_clr.shape == (c, 1), print(old_clr)
                             new_clr = old_clr.clone()
                             while (new_clr == old_clr).all().item():
-                                new_clr = self.random_choice([c, 1]).clone().clamp(0., 1.)
+                                new_clr = self.random_choice_255([c, 1]).clone().clamp(0., 255.)
                             x_new[img_idx, :, np_set // w, np_set % w] = new_clr.clone()
                         
                     # compute loss of the new candidates
@@ -411,14 +420,14 @@ class RSAttack():
                 
                 if iteration_start_loss != float('inf') and not should_update_iteration:
                     # 개선되지 않았으므로 이전 이미지 반환
-                    print(f'No improvement: returning previous best image')
+                    # print(f'No improvement: returning previous best image')
                     return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
                 else:
                     # 개선되었으므로 현재 상태를 이전 상태로 저장
                     self.previous_best_img = x_best.clone()
                     self.previous_best_loss = loss_min
                     self.previous_best_changed_pixels = best_changed_pixels
-                    print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min.item():.4f}')
+                    # print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min.item():.4f}')
 
             elif self.norm == 'patches':
                 ''' 
@@ -494,22 +503,22 @@ class RSAttack():
                             # update patch (원본 코드 방식)
                             if it < it_start_cu:
                                 if s_it > 1:
-                                    patches_new_coll[i][:, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] += self.random_choice([c, 1, 1])
+                                    patches_new_coll[i][:, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] += self.random_choice_255([c, 1, 1])
                                 else:
                                     # make sure to sample a different color (원본 코드)
                                     old_clr = patches_new_coll[i][:, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it].clone()
                                     new_clr = old_clr.clone()
                                     while (new_clr == old_clr).all().item():
-                                        new_clr = self.random_choice([c, 1, 1]).clone().clamp(0., 1.)
+                                        new_clr = self.random_choice_255([c, 1, 1]).clone().clamp(0., 255.)
                                     patches_new_coll[i][:, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] = new_clr.clone()
                             else:
                                 assert s_it == 1
                                 assert it >= it_start_cu
                                 # single channel updates (원본 코드)
                                 new_ch = self.random_int(low=0, high=3, shape=[1])
-                                patches_new_coll[i][new_ch, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] = 1. - patches_new_coll[i][new_ch, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it]
+                                patches_new_coll[i][new_ch, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] = 255. - patches_new_coll[i][new_ch, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it]
                                 
-                            patches_new_coll[i].clamp_(0., 1.)
+                            patches_new_coll[i].clamp_(0., 255.)
 
                         if update_loc == 1:
                             loc_to_change = locs_new_coll[i]
@@ -628,21 +637,21 @@ class RSAttack():
                     patch_new = patch_univ.clone()
                     
                     if s_it > 1:
-                        patch_new[0, :, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] += self.random_choice([c, 1, 1])
+                        patch_new[0, :, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] += self.random_choice_255([c, 1, 1])
                     else:
                         old_clr = patch_new[0, :, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it].clone()
                         new_clr = old_clr.clone()
                         if it < it_start_cu:
                             while (new_clr == old_clr).all().item():
-                                new_clr = self.random_choice(new_clr).clone().clamp(0., 1.)
+                                new_clr = self.random_choice_255(new_clr).clone().clamp(0., 255.)
                         else:
                             # single channel update
                             new_ch = self.random_int(low=0, high=3, shape=[1])
-                            new_clr[new_ch] = 1. - new_clr[new_ch]
+                            new_clr[new_ch] = 255. - new_clr[new_ch]
                         
                         patch_new[0, :, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] = new_clr.clone()
                             
-                    patch_new.clamp_(0., 1.)
+                    patch_new.clamp_(0., 255.)
                     
                     # compute loss for new candidate
                     x_new = x.clone()
@@ -727,8 +736,8 @@ class RSAttack():
                         it_start_cu))
                 
                 # initialize frames
-                x_best[:, :, ind[:, 0], ind[:, 1]] = self.random_choice(
-                    [x.shape[0], c, eps]).clamp(0., 1.)
+                x_best[:, :, ind[:, 0], ind[:, 1]] = self.random_choice_255(
+                    [x.shape[0], c, eps]).clamp(0., 255.)
                 
                 margin_min, loss_min = self.margin_and_loss(x_best, y)
                 n_queries = torch.ones(x.shape[0]).to(self.device)
@@ -756,7 +765,7 @@ class RSAttack():
                     if s_it > 1:
                         dir_h = self.random_choice([1]).long().cpu()
                         dir_w = self.random_choice([1]).long().cpu()
-                        new_clr = self.random_choice([c, 1]).clamp(0., 1.)
+                        new_clr = self.random_choice_255([c, 1]).clamp(0., 255.)
                     
                     for counter in range(x_curr.shape[0]):
                         if s_it > 1:
@@ -770,14 +779,14 @@ class RSAttack():
                             new_clr = old_clr.clone()
                             if it < it_start_cu:
                                 while (new_clr == old_clr).all().item():
-                                    new_clr = self.random_choice([c, 1, 1]).clone().clamp(0., 1.)
+                                    new_clr = self.random_choice_255([c, 1, 1]).clone().clamp(0., 255.)
                             else:
                                 # single channel update
                                 new_ch = self.random_int(low=0, high=3, shape=[1])
-                                new_clr[new_ch] = 1. - new_clr[new_ch]
+                                new_clr[new_ch] = 255. - new_clr[new_ch]
                             x_new[counter, :, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] = new_clr.clone()
                         
-                    x_new.clamp_(0., 1.)
+                    x_new.clamp_(0., 255.)
                     x_new = (x_new - x_curr) * mask_frame + x_curr
                     
                     # check loss of new candidate
@@ -865,7 +874,7 @@ class RSAttack():
                 x_new = x.clone()
                 mask = mask.view(1, 1, h, w).to(self.device)
                 mask_frame = torch.ones([1, c, h, w], device=x.device) * mask
-                frame_univ = self.random_choice([1, c, eps]).clamp(0., 1.)
+                frame_univ = self.random_choice_255([1, c, eps]).clamp(0., 255.)
         
                 # set when to start single channel updates
                 it_start_cu = None
@@ -911,7 +920,7 @@ class RSAttack():
                     if s_it > 1:
                         dir_h = self.random_choice([1]).long().cpu()
                         dir_w = self.random_choice([1]).long().cpu()
-                        new_clr = self.random_choice([c, 1]).clamp(0., 1.)
+                        new_clr = self.random_choice_255([c, 1]).clamp(0., 255.)
                         
                         for counter_h in range(s_it):
                             for counter_w in range(s_it):
@@ -923,15 +932,15 @@ class RSAttack():
                         new_clr = old_clr.clone()
                         if it < it_start_cu:
                             while (new_clr == old_clr).all().item():
-                                new_clr = self.random_choice([c, 1, 1]).clone().clamp(0., 1.)
+                                new_clr = self.random_choice_255([c, 1, 1]).clone().clamp(0., 255.)
                         else:
                             # single channel update
                             new_ch = self.random_int(low=0, high=3, shape=[1])
-                            new_clr[new_ch] = 1. - new_clr[new_ch]
+                            new_clr[new_ch] = 255. - new_clr[new_ch]
                         mask_frame[0, :, p_it[0]:p_it[0] + s_it, p_it[1]:p_it[1] + s_it] = new_clr.clone()
         
                     frame_new = mask_frame[:, :, ind[:, 0], ind[:, 1]].clone()
-                    frame_new.clamp_(0., 1.)
+                    frame_new.clamp_(0., 255.)
                     if len(frame_new.shape) == 2:
                         frame_new.unsqueeze_(0)
                     
@@ -1021,15 +1030,12 @@ class RSAttack():
                 # 예측이 맞은 픽셀만 선택
                 # condition_mask = torch.ones_like(first_img_pred_labels, dtype=torch.bool)
 
-                #gt를 사용해 배경 제거
+                #gt를 사용해 배경 픽셀은 loss 계산에서 제외
                 if self.cfg['dataset'] == 'cityscapes':
-                    # Cityscapes: gt에서 255인 픽셀 무시
                     valid_gt_mask = gt != 255
                 elif self.cfg['dataset'] == 'ade20k':
-                    # ADE20k: gt에서 0번 클래스인 픽셀 무시
                     valid_gt_mask = gt != 0
                 elif self.cfg['dataset'] == 'VOC2012':
-                    # VOC2012: gt에서 255인 픽셀 무시 (배경은 0번 클래스)
                     valid_gt_mask = gt != 0
                 else:
                     raise ValueError(f"Unsupported dataset: {self.cfg['dataset']}")
