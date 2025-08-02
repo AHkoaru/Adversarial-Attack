@@ -95,15 +95,11 @@ def process_single_image(args):
     adv_img_bgr_list = []
     total_queries = config["iters"] * config["n_queries"]
     save_steps = [int(total_queries * (i+1) / 5) for i in range(5)]
-    current_queries = 0
-    # print(f"save_steps: {save_steps}")
     for iter_idx in range(config["iters"]):
         current_query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
         img_tensor_bgr = adv_img_bgr
-        # print(f"current_query: {current_query}")
         # 다음 iteration을 위해 업데이트
         if current_query in save_steps:
-            print(f"save_query: {current_query}")
             adv_img_bgr_list.append(adv_img_bgr)
     
     # 모든 save_steps에 도달하지 못한 경우 마지막 결과로 채우기
@@ -336,6 +332,7 @@ def main(config):
     torch.cuda.empty_cache()
 
     _, init_mious = eval_miou(model, img_list, img_list, gt_list, config)
+    
     benign_to_adv_mious = []
     gt_to_adv_mious = []
     gt_mean_accuracy  = []
@@ -346,14 +343,46 @@ def main(config):
     mean_ratio = []
     mean_impact = []
     
+    # 클래스별 IoU 값들을 저장할 리스트 (VOC2012일 때만 label 0 제외)
+    benign_to_adv_per_ious_excluding_label0 = []
+    gt_to_adv_per_ious_excluding_label0 = []
+    
     for i in range(5):
         benign_to_adv_miou, gt_to_adv_miou = eval_miou(model, img_list, adv_img_lists[i], gt_list, config)
+        
+        # 기존 메트릭들
         benign_to_adv_mious.append(benign_to_adv_miou['mean_iou'].item())
         gt_to_adv_mious.append(gt_to_adv_miou['mean_iou'].item())
         gt_mean_accuracy.append(gt_to_adv_miou['mean_accuracy'].item())
         gt_overall_accuracy.append(gt_to_adv_miou['overall_accuracy'].item())
         benign_mean_accuracy.append(benign_to_adv_miou['mean_accuracy'].item())
         benign_overall_accuracy.append(benign_to_adv_miou['overall_accuracy'].item())
+
+        # VOC2012 데이터셋일 때만 per_category_iou에서 label 0을 제외한 평균 계산
+        if config["dataset"] == "VOC2012":
+            if 'per_category_iou' in benign_to_adv_miou:
+                benign_per_iou_values = benign_to_adv_miou['per_category_iou']
+                # label 0 (첫 번째 클래스)을 제외하고 nan이 아닌 값들만으로 평균 계산
+                benign_per_iou_excluding_label0 = benign_per_iou_values[1:]  # 인덱스 1부터 (label 1~)
+                # nan 값들을 제외하고 평균 계산
+                benign_mean_iou_excluding_label0 = np.nanmean(benign_per_iou_excluding_label0).item()
+                benign_to_adv_per_ious_excluding_label0.append(benign_mean_iou_excluding_label0)
+            else:
+                benign_to_adv_per_ious_excluding_label0.append(None)
+                
+            if 'per_category_iou' in gt_to_adv_miou:
+                gt_per_iou_values = gt_to_adv_miou['per_category_iou']
+                # label 0 (첫 번째 클래스)을 제외하고 nan이 아닌 값들만으로 평균 계산  
+                gt_per_iou_excluding_label0 = gt_per_iou_values[1:]  # 인덱스 1부터 (label 1~)
+                # nan 값들을 제외하고 평균 계산
+                gt_mean_iou_excluding_label0 = np.nanmean(gt_per_iou_excluding_label0).item()
+                gt_to_adv_per_ious_excluding_label0.append(gt_mean_iou_excluding_label0)
+            else:
+                gt_to_adv_per_ious_excluding_label0.append(None)
+        else:
+            # VOC2012가 아닌 경우에는 None으로 설정
+            benign_to_adv_per_ious_excluding_label0.append(None)
+            gt_to_adv_per_ious_excluding_label0.append(None)
 
         mean_l0.append(np.mean(all_l0_metrics[i]).item())
         mean_ratio.append(np.mean(all_ratio_metrics[i]).item())
@@ -371,6 +400,12 @@ def main(config):
         "Average Ratio": mean_ratio,
         "Average Impact": mean_impact,
     }
+    
+    # VOC2012 데이터셋일 때만 label 0을 제외한 mIoU 메트릭 추가
+    if config["dataset"] == "VOC2012":
+        final_results["Average mIoU excluding label 0 (benign)"] = benign_to_adv_per_ious_excluding_label0
+        final_results["Average mIoU excluding label 0 (gt)"] = gt_to_adv_per_ious_excluding_label0
+
     print("\n--- Experiment Summary ---")
     print(final_results)
     
