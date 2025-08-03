@@ -10,7 +10,7 @@ from mmseg.apis import init_model, inference_model
 
 from function import *
 from evaluation import *
-from dataset import CitySet, ADESet
+from dataset import CitySet, ADESet, VOCSet
 
 from pixle import Pixle
 from utils import save_experiment_results
@@ -81,6 +81,16 @@ def main(config):
                 "config": 'configs/setr/setr_vit-l_pup_8xb2-160k_ade20k-512x512.py',
                 "checkpoint": 'ckpt/setr_pup_512x512_160k_b16_ade20k_20210619_191343-7e0ce826.pth'
             }
+        },
+        "VOC2012": {
+            "deeplabv3": {
+                "config": 'configs/deeplabv3/deeplabv3_r101-d8_4xb4-20k_voc12aug-512x512.py',
+                "checkpoint": 'ckpt/deeplabv3_r101-d8_512x512_20k_voc12aug_20200617_010932-8d13832f.pth'
+            },
+            "pspnet": {
+                "config": 'configs/pspnet/pspnet_r101-d8_4xb4-40k_voc12aug-512x512.py',
+                "checkpoint": 'ckpt/pspnet_r101-d8_512x512_20k_voc12aug_20200617_102003-4aef3c9a.pth'
+            }
         }
     }
 
@@ -105,26 +115,32 @@ def main(config):
         dataset = CitySet(dataset_dir=config["data_dir"])
     elif config["dataset"] == "ade20k":
         dataset = ADESet(dataset_dir=config["data_dir"])
-    else:
+    elif config["dataset"] == "VOC2012":
+        dataset = VOCSet(dataset_dir=config["data_dir"])
+    else:   
         raise ValueError(f"Unsupported dataset: {config['dataset']}")
     
-    # num_images = 5
+    num_images = config["num_images"]
 
-    # # 데이터셋 전체를 랜덤하게 섞기 위한 인덱스 생성 및 셔플
-    # n_total = len(dataset.images)
-    # indices = np.arange(n_total)
+    # 데이터셋 전체를 랜덤하게 섞기 위한 인덱스 생성 및 셔플
+    n_total = len(dataset.images)
+    indices = np.arange(n_total)
     # np.random.shuffle(indices) # 인덱스를 무작위로 섞음
 
-    # # 섞인 인덱스를 사용하여 데이터셋 리스트 재정렬
-    # dataset.images = [dataset.images[i] for i in indices]
-    # dataset.filenames = [dataset.filenames[i] for i in indices]
-    # dataset.gt_images = [dataset.gt_images[i] for i in indices]
+    # 섞인 인덱스를 사용하여 데이터셋 리스트 재정렬
+    dataset.images = [dataset.images[i] for i in indices]
+    dataset.filenames = [dataset.filenames[i] for i in indices]
+    dataset.gt_images = [dataset.gt_images[i] for i in indices]
 
-    # # 이후 코드가 num_images 만큼 앞에서부터 선택하므로, 결과적으로 랜덤 샘플링됨
+    # 이후 코드가 num_images 만큼 앞에서부터 선택하므로, 결과적으로 랜덤 샘플링됨
 
-    # dataset.images = dataset.images[:min(len(dataset.images), num_images)]
-    # dataset.filenames = dataset.filenames[:min(len(dataset.filenames), num_images)]
-    # dataset.gt_images = dataset.gt_images[:min(len(dataset.gt_images), num_images)]
+    dataset.images = dataset.images[:min(len(dataset.images), num_images)]
+    dataset.filenames = dataset.filenames[:min(len(dataset.filenames), num_images)]
+    dataset.gt_images = dataset.gt_images[:min(len(dataset.gt_images), num_images)]
+    
+    print(f"Total dataset size: {n_total}")
+    print(f"Requested num_images: {num_images}")
+    print(f"Actual images to process: {len(dataset.images)}")
     if config["model"] == "setr":
         model = init_model(model_cfg["config"], None, 'cuda')
         checkpoint = torch.load(model_cfg["checkpoint"], map_location='cuda', weights_only=False)
@@ -148,9 +164,10 @@ def main(config):
     filename_list = []
     adv_img_lists = [[] for _ in range(5)] # Store adv images for each iteration level
     adv_query_lists = [[] for _ in range(5)] # Store adv query for each iteration level
-    all_l0_metrics = [[] for _ in range(5)] # List of lists for L0 for each iteration level
-    all_ratio_metrics = [[] for _ in range(5)] # List of lists for ratio
-    all_impact_metrics = [[] for _ in range(5)] # List of lists for impact
+    # Change to 2D lists to match rs_eval.py style
+    all_l0_metrics = [[] for _ in range(5)]
+    all_ratio_metrics = [[] for _ in range(5)]
+    all_impact_metrics = [[] for _ in range(5)]
 
     #Record start time
     start_time = datetime.datetime.now()
@@ -162,7 +179,7 @@ def main(config):
     os.makedirs(base_dir, exist_ok=True)
 
     for i, (img_bgr, filename, gt) in tqdm(enumerate(dataset), desc="Generating adversarial examples"):
-        setproctitle.setproctitle(f"Pixle_Attack_{config['dataset']}_{config['model']}_{config['attack_pixel']}_({i+1}/100)_Process")
+        setproctitle.setproctitle(f"Pixle_Attack_{config['dataset']}_{config['model']}_{config['attack_pixel']}_({i+1}/{len(dataset.images)})_Process")
 
         img_tensor = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(device) # Ensure float and on GPU
         gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(device) # Ensure long and on GPU
@@ -170,21 +187,20 @@ def main(config):
 
 
         # --- Separate directory and filename from the original filename ---
-        original_dir = os.path.dirname(filename) # e.g., "frankfurt" or ""
         original_basename = os.path.basename(filename) # e.g., "frankfurt_000000_005543_leftImg8bit.png"
+        image_name = os.path.splitext(original_basename)[0]  # Remove extension for directory name
         # ----------------------------------------------------------------
 
         # --- Calculate and save original segmentation ONCE per image ---
         ori_result = inference_model(model, img_bgr) # Use BGR image
 
+        # Create individual directory for this image (rs_eval.py style)
+        current_img_save_dir = os.path.join(base_dir, image_name)
+        os.makedirs(current_img_save_dir, exist_ok=True)
         
-        # Create the full directory path including the original subdirectory
-        ori_seg_dir = os.path.join(base_dir, "ori_seg", original_dir)
-        os.makedirs(ori_seg_dir, exist_ok=True) # Create the directory if it doesn't exist
-        img = img_bgr[:, :, ::-1]
-        visualize_segmentation(img, ori_result.pred_sem_seg.data.squeeze().cpu().numpy(),
-                            # Save using the original basename in the created directory
-                            save_path=os.path.join(ori_seg_dir, original_basename))
+        # Save original image
+        img = img_bgr[:, :, ::-1]  # Convert BGR to RGB
+        Image.fromarray(img).save(os.path.join(current_img_save_dir, "original.png"))
         # --------------------------------------------------------------
 
         # Calculate the number of pixels per patch
@@ -230,128 +246,135 @@ def main(config):
         for i in range(5):
             adv_img_lists[i].append(adv_examples_bgr_numpy[i]) # Store BGR adv image
             adv_query_lists[i].append(example_query[i])
-        # --- Loop for saving iteration-specific results and calculating metrics ---
+        # --- Loop for saving iteration-specific results and calculating metrics (rs_eval.py style) ---
         for i in range(5):
-            # Define base paths for this iteration
-            adv_base_path = os.path.join(base_dir, f"adv/{i+1}000query")
-            delta_base_path = os.path.join(base_dir, f"delta/{i+1}000query")
-            adv_seg_base_path = os.path.join(base_dir, f"adv_seg/{i+1}000query")
-
-            # Create the full directory paths including the original subdirectory
-            full_adv_dir = os.path.join(adv_base_path, original_dir)
-            full_delta_dir = os.path.join(delta_base_path, original_dir)
-            full_adv_seg_dir = os.path.join(adv_seg_base_path, original_dir)
-
-            os.makedirs(full_adv_dir, exist_ok=True)
-            os.makedirs(full_delta_dir, exist_ok=True)
-            os.makedirs(full_adv_seg_dir, exist_ok=True)
+            # Create query-specific directory for this image
+            query_img_save_dir = os.path.join(current_img_save_dir, f"{i+1}000query")
+            os.makedirs(query_img_save_dir, exist_ok=True)
 
             current_adv_img_rgb = adv_examples_rgb_numpy[i]
             current_adv_img_bgr = adv_examples_bgr_numpy[i] # Use BGR for inference if model expects it
 
-            # Save adversarial example (RGB)
-            adv_img_pil = Image.fromarray(current_adv_img_rgb)
-            # Save using the original basename in the created directory
-            adv_img_pil.save(os.path.join(full_adv_dir, original_basename))
+            # Save adversarial image (RGB)
+            Image.fromarray(current_adv_img_rgb).save(os.path.join(query_img_save_dir, "adv.png"))
 
             # Calculate and save delta image (against original RGB)
             delta_img_np = np.abs(img.astype(np.int16) - current_adv_img_rgb.astype(np.int16)).astype(np.uint8)
-            delta_img_pil = Image.fromarray(delta_img_np)
-            # Save using the original basename in the created directory
-            delta_img_pil.save(os.path.join(full_delta_dir, original_basename))
+            Image.fromarray(delta_img_np).save(os.path.join(query_img_save_dir, "delta.png"))
 
             # Calculate and save adversarial segmentation
             adv_result = inference_model(model, current_adv_img_bgr)
-            # Save using the original basename in the created directory
-            visualize_segmentation(current_adv_img_rgb, adv_result.pred_sem_seg.data.squeeze().cpu().numpy(), # Visualize with RGB
-                                save_path=os.path.join(full_adv_seg_dir, original_basename))
+            adv_pred = adv_result.pred_sem_seg.data.squeeze().cpu().numpy()
+            ori_pred = ori_result.pred_sem_seg.data.squeeze().cpu().numpy()
+
+            # Save segmentation visualizations (rs_eval.py style)
+            visualize_segmentation(img, ori_pred,
+                                save_path=os.path.join(query_img_save_dir, "ori_seg.png"),
+                                alpha=0.5, dataset=config["dataset"])
+            
+            visualize_segmentation(img, ori_pred,
+                                save_path=os.path.join(query_img_save_dir, "ori_seg_only.png"),
+                                alpha=1, dataset=config["dataset"])
+            
+            visualize_segmentation(current_adv_img_rgb, adv_pred,
+                                save_path=os.path.join(query_img_save_dir, "adv_seg.png"),
+                                alpha=0.5, dataset=config["dataset"])
+            
+            visualize_segmentation(current_adv_img_rgb, adv_pred,
+                                save_path=os.path.join(query_img_save_dir, "adv_seg_only.png"),
+                                alpha=1, dataset=config["dataset"])
 
             # Calculate metrics using RGB uint8 images
             l0 = calculate_l0_norm(img, current_adv_img_rgb)
             ratio = calculate_pixel_ratio(img, current_adv_img_rgb)
-            impact = calculate_impact(img, current_adv_img_rgb,
-                                    ori_result.pred_sem_seg.data.squeeze().cpu().numpy(),
-                                    adv_result.pred_sem_seg.data.squeeze().cpu().numpy())
+            impact = calculate_impact(img, current_adv_img_rgb, ori_pred, adv_pred)
 
-            # Append metrics for this image and iteration level
+            # Append metrics for this image and iteration level (rs_eval.py style)
             all_l0_metrics[i].append(l0)
             all_ratio_metrics[i].append(ratio)
             all_impact_metrics[i].append(impact)
         # --- End of inner loop (i=0 to 4) ---
     # --- End of dataset loop ---
 
-    # --- Perform mIoU evaluation AFTER processing all images ---
-    init_benign_to_adv_miou, init_gt_to_adv_miou = eval_miou(model, img_list, img_list, gt_list, config) # Evaluate benign using original images
+    # --- Perform mIoU evaluation AFTER processing all images (rs_eval.py style) ---
+    _, init_mious = eval_miou(model, img_list, img_list, gt_list, config)
+    
     benign_to_adv_mious = []
     gt_to_adv_mious = []
-
+    gt_mean_accuracy  = []
+    gt_overall_accuracy = []
+    benign_mean_accuracy  = []
+    benign_overall_accuracy = []
+    mean_l0 = []
+    mean_ratio = []
+    mean_impact = []
+    
+    # 클래스별 IoU 값들을 저장할 리스트 (VOC2012일 때만 label 0 제외)
+    benign_to_adv_per_ious_excluding_label0 = []
+    gt_to_adv_per_ious_excluding_label0 = []
+    
     for i in range(5):
         benign_to_adv_miou, gt_to_adv_miou = eval_miou(model, img_list, adv_img_lists[i], gt_list, config)
-        benign_to_adv_mious.append(benign_to_adv_miou)
-        gt_to_adv_mious.append(gt_to_adv_miou)
-
-
-
-    print("-" * 20)
-    print(f"Benign_to_adv mIoU: {init_benign_to_adv_miou['mean_iou']}")
-    print(f"GT_to_adv mIoU: {init_gt_to_adv_miou['mean_iou']}")
-
-    results_list = []
-    for i in range(5):
-        # Calculate mean metrics for iteration level i across all images
-        mean_query = np.mean(adv_query_lists[i]) if adv_query_lists[i] else 0
-        mean_l0 = np.mean(all_l0_metrics[i]) if all_l0_metrics[i] else 0
-        mean_ratio = np.mean(all_ratio_metrics[i]) if all_ratio_metrics[i] else 0
-        mean_impact = np.mean(all_impact_metrics[i]) if all_impact_metrics[i] else 0
-        benign_to_adv_miou = benign_to_adv_mious[i]
-        gt_to_adv_miou = gt_to_adv_mious[i] # You might want this too
-
-        iteration_results = {
-            "benign_to_adv_miou": benign_to_adv_miou['mean_iou'],
-            "gt_to_adv_miou": gt_to_adv_miou['mean_iou'],
-            "mean_query": mean_query,
-            "mean_l0": mean_l0,
-            "mean_ratio": mean_ratio,
-            "mean_impact": mean_impact,
-            "individual_query": adv_query_lists[i],
-            "individual_l0": all_l0_metrics[i],
-            "individual_ratio": all_ratio_metrics[i],
-            "individual_impact": all_impact_metrics[i],
-        }
-        results_list.append(iteration_results)
-        # Save the consolidated results file in the base directory
         
-        print(f"--- Iteration {(i+1)*1000} ---")
-        print(f"    Benign_to_adv mIoU: {benign_to_adv_miou['mean_iou']}")
-        print(f"    GT_to_adv mIoU: {gt_to_adv_miou['mean_iou']}")
-        print(f"    Mean L0: {mean_l0:.2f}")
-        print(f"    Mean Ratio: {mean_ratio}")
-        print(f"    Mean Impact: {mean_impact}")
-        print(f"    Mean Query: {mean_query}")
+        # 기존 메트릭들
+        benign_to_adv_mious.append(benign_to_adv_miou['mean_iou'].item())
+        gt_to_adv_mious.append(gt_to_adv_miou['mean_iou'].item())
+        gt_mean_accuracy.append(gt_to_adv_miou['mean_accuracy'].item())
+        gt_overall_accuracy.append(gt_to_adv_miou['overall_accuracy'].item())
+        benign_mean_accuracy.append(benign_to_adv_miou['mean_accuracy'].item())
+        benign_overall_accuracy.append(benign_to_adv_miou['overall_accuracy'].item())
 
-    # --- Calculate final average metrics and save results ONCE ---
+        # VOC2012 데이터셋일 때만 per_category_iou에서 label 0을 제외한 평균 계산
+        if config["dataset"] == "VOC2012":
+            if 'per_category_iou' in benign_to_adv_miou:
+                benign_per_iou_values = benign_to_adv_miou['per_category_iou']
+                # label 0 (첫 번째 클래스)을 제외하고 nan이 아닌 값들만으로 평균 계산
+                benign_per_iou_excluding_label0 = benign_per_iou_values[1:]  # 인덱스 1부터 (label 1~)
+                # nan 값들을 제외하고 평균 계산
+                benign_mean_iou_excluding_label0 = np.nanmean(benign_per_iou_excluding_label0).item()
+                benign_to_adv_per_ious_excluding_label0.append(benign_mean_iou_excluding_label0)
+            else:
+                benign_to_adv_per_ious_excluding_label0.append(None)
+                
+            if 'per_category_iou' in gt_to_adv_miou:
+                gt_per_iou_values = gt_to_adv_miou['per_category_iou']
+                # label 0 (첫 번째 클래스)을 제외하고 nan이 아닌 값들만으로 평균 계산  
+                gt_per_iou_excluding_label0 = gt_per_iou_values[1:]  # 인덱스 1부터 (label 1~)
+                # nan 값들을 제외하고 평균 계산
+                gt_mean_iou_excluding_label0 = np.nanmean(gt_per_iou_excluding_label0).item()
+                gt_to_adv_per_ious_excluding_label0.append(gt_mean_iou_excluding_label0)
+            else:
+                gt_to_adv_per_ious_excluding_label0.append(None)
+        else:
+            # VOC2012가 아닌 경우에는 None으로 설정
+            benign_to_adv_per_ious_excluding_label0.append(None)
+            gt_to_adv_per_ious_excluding_label0.append(None)
+
+        mean_l0.append(np.mean(all_l0_metrics[i]).item())
+        mean_ratio.append(np.mean(all_ratio_metrics[i]).item())
+        mean_impact.append(np.mean(all_impact_metrics[i]).item())
+
     final_results = {
-        "experiment_config": config,
-        "model_config": model_cfg,
-        "num_images": len(img_list),
-        "start_time": start_timestamp,
-        "end_time": datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
-        "elapsed_time": (datetime.datetime.now() - start_time).total_seconds(),
-        "init_benign_to_adv_miou": init_benign_to_adv_miou['mean_iou'],
-        "init_gt_to_adv_miou": init_gt_to_adv_miou['mean_iou'],
-        "benign_to_adv_miou_results": benign_to_adv_miou['mean_iou'],
-        "gt_to_adv_miou_results": gt_to_adv_miou['mean_iou'],
-        "mean_query_results": mean_query,
-        "mean_l0_results": mean_l0,
-        "mean_ratio_results": mean_ratio,
-        "mean_impact_results": mean_impact,
-        "query_1000": results_list[0],
-        "query_2000": results_list[1],
-        "query_3000": results_list[2],
-        "query_4000": results_list[3],
-        "query_5000": results_list[4]
+        "Init mIoU" : init_mious['mean_iou'],
+        "Average Adversarial mIoU(benign)" : benign_to_adv_mious,
+        "Average Accuracy(benign)": benign_mean_accuracy,
+        "Average Overall Accuracy(benign)": benign_overall_accuracy,
+        "Average Adversarial mIoU(gt)" : gt_to_adv_mious,
+        "Average Accuracy(gt)": gt_mean_accuracy,
+        "Average Overall Accuracy(gt)": gt_overall_accuracy,
+        "Average L0": mean_l0,
+        "Average Ratio": mean_ratio,
+        "Average Impact": mean_impact,
     }
+    
+    # VOC2012 데이터셋일 때만 label 0을 제외한 mIoU 메트릭 추가
+    if config["dataset"] == "VOC2012":
+        final_results["Average mIoU excluding label 0 (benign)"] = benign_to_adv_per_ious_excluding_label0
+        final_results["Average mIoU excluding label 0 (gt)"] = gt_to_adv_per_ious_excluding_label0
 
+    print("\n--- Experiment Summary ---")
+    print(final_results)
+    
     save_experiment_results(final_results,
                             config,
                             sweep_config=None, # Pass if needed
@@ -367,11 +390,14 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, required=True, help="Path to the config file.")
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--attack_pixel", type=float, required=True, help="Ratio of adversarial pixels to total image pixels.") # 새 pixel_ratio 인자 추가
+    parser.add_argument("--num_images", type=int, default=100, help="Number of images to process.")
     args = parser.parse_args()
 
     config = load_config(args.config)
     
+    config["attack_method"] = "PixelAttack"
     config["device"] = args.device
     config["attack_pixel"] = args.attack_pixel
-
+    config["num_images"] = args.num_images
+    config["base_dir"] = f"./data/{config['attack_method']}/results/{config['dataset']}/{config['model']}"
     main(config)
