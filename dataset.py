@@ -25,7 +25,7 @@ class CitySet:
                              └── gtFine/
                                  ├── train/
                                  │   ├── aachen/
-                                 │   │   ├── aachen_000000_000019_gtFine_labelIds.png
+                                 │   │   ├── aachen_000000_000019_gtFine_labelTrainIds.png
                              │   │   └── ...
                              │   ├── bochum/
                              │   └── ...
@@ -99,7 +99,7 @@ class CitySet:
                             
 
 
-                            gt_filename = filename.replace("_leftImg8bit.png", "_gtFine_labelIds.png")
+                            gt_filename = filename.replace("_leftImg8bit.png", "_gtFine_labelTrainIds.png")
                             gt_path = os.path.join(self.gt_dir, city, gt_filename)
                             gt_img = Image.open(gt_path)
                             gt_array = np.array(gt_img)
