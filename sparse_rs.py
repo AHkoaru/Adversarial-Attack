@@ -117,47 +117,47 @@ class RSAttack():
         
     def margin_and_loss(self, img, final_mask, first_img_pred_labels):
         adv_result = inference_model(self.model, img.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
-
         adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (Class, H, W)
-        # margin 기반 loss로 변경
-        # final_mask: (Class, H, W) - 정답 위치 True
-        # 1. 정답 클래스 인덱스 맵 (H, W)
         gt_indices = final_mask.float().argmax(dim=0)  # (H, W)
         # 2. 정답 로짓
         correct_logits = adv_logits.gather(0, gt_indices.unsqueeze(0)).squeeze(0)  # (H, W)
-        # 3. 정답이 아닌 클래스의 로짓 중 최대값
-        adv_logits_clone = adv_logits.clone()
-        # (Class, H, W)에서 정답 위치에 -inf를 넣어줌
-        h, w = adv_logits.shape[1], adv_logits.shape[2]
-        adv_logits_clone[gt_indices, torch.arange(h).unsqueeze(1).expand(h, w), torch.arange(w).expand(h, w)] = float('-inf')
-        max_wrong_logits, _ = adv_logits_clone.max(dim=0)  # (H, W)
-        # 4. margin 계산
-        margin = correct_logits - max_wrong_logits  # (H, W)
-        # 배경 픽셀들은 loss 계산에서 제외
-        valid_pixel_mask = final_mask.any(dim=0)
-        loss_val = margin[valid_pixel_mask].mean()
-        
-        if self.use_decision_loss is False:
-            if self.verbose is True:
-                print(f'loss_val: {loss_val:.4f} (decision_loss=False)')
+        if self.loss == 'margin':
+            # margin 기반 loss로 변경
+            adv_logits_clone = adv_logits.clone()
+            h, w = adv_logits.shape[1], adv_logits.shape[2]
+            adv_logits_clone[gt_indices, torch.arange(h).unsqueeze(1).expand(h, w), torch.arange(w).expand(h, w)] = float('-inf')
+            max_wrong_logits, _ = adv_logits_clone.max(dim=0)  # (H, W)
+            # 4. margin 계산
+            margin = correct_logits - max_wrong_logits  # (H, W)
+            # 배경 픽셀들은 loss 계산에서 제외
+            valid_pixel_mask = final_mask.any(dim=0)
+            loss_val = margin[valid_pixel_mask].mean()
+
             return loss_val.detach().cpu().numpy(), None, None
         
-        # decision_loss=True일 때만 changed pixels 계산
-        adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
-        H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
-        current_changed_pixels = (adv_pred_labels != self.original_pred_labels.to(self.device)).long().to(self.device)
-        
-        #calculate changed pixels for decision loss
-        if self.pre_changed_pixels is not None:
-            changed_pixels = current_changed_pixels - self.pre_changed_pixels
-        else:
-            changed_pixels = current_changed_pixels
-        decision_loss = (torch.sum(changed_pixels.float()) / ((H * W * self.eps) * (self.d ** 2)))
-        if self.verbose is True:
-            print(f'loss_val: {loss_val:.4f}, decision_loss: {-decision_loss:.4f}, total_loss: {(loss_val - decision_loss):.4f}')
+        elif self.loss == 'prob':
+            adv_probs = softmax(adv_logits, dim=0) # Shape: (C, H, W)
+            adv_correct_probs = adv_probs[final_mask]
+            loss_val = torch.mean(adv_correct_probs.float())
 
-        # Return loss as numpy float. Lower value means the attack is more successful.
-        return (loss_val - decision_loss).detach().cpu().numpy(), current_changed_pixels, (-decision_loss).detach().cpu().numpy()
+            return loss_val.detach().cpu().numpy(), None, None
+
+        # # decision_loss=True일 때만 changed pixels 계산
+        # adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+        # H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
+        # current_changed_pixels = (adv_pred_labels != self.original_pred_labels.to(self.device)).long().to(self.device)
+        
+        # #calculate changed pixels for decision loss
+        # if self.pre_changed_pixels is not None:
+        #     changed_pixels = current_changed_pixels - self.pre_changed_pixels
+        # else:
+        #     changed_pixels = current_changed_pixels
+        # decision_loss = (torch.sum(changed_pixels.float()) / ((H * W * self.eps) * (self.d ** 2)))
+        # if self.verbose is True:
+        #     print(f'loss_val: {loss_val:.4f}, decision_loss: {-decision_loss:.4f}, total_loss: {(loss_val - decision_loss):.4f}')
+
+        # # Return loss as numpy float. Lower value means the attack is more successful.
+        # return (loss_val - decision_loss).detach().cpu().numpy(), current_changed_pixels, (-decision_loss).detach().cpu().numpy()
 
     def init_hyperparam(self, x):
         assert self.norm in ['L0', 'patches', 'frames',

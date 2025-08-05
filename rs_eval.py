@@ -83,7 +83,7 @@ def process_single_image(args):
         seed=0,
         verbose=config.get("verbose", False),  # config에서 verbose 설정 가져오기
         targeted=False,
-        loss='segmentation_prob', # As used in the class
+        loss=config["loss"], # As used in the class
         resc_schedule=True,
         device=config["device"],
         log_path=None, # Disable logging for this simple test or provide a path
@@ -430,6 +430,7 @@ if __name__ == '__main__':
     parser.add_argument('--use_decision_loss', type=str, default='False', choices=['True', 'False'], help='Whether to use decision loss.')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output.')
     parser.add_argument('--norm', type=str, default='L0', choices=['L0', 'patches'], help='Norm for RSAttack.')
+    parser.add_argument('--loss', type=str, default='margin', choices=['margin', 'prob'], help='Loss function for RSAttack.')
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -447,4 +448,5 @@ if __name__ == '__main__':
     config["use_decision_loss"] = args.use_decision_loss.lower() == 'true'  # 문자열을 boolean으로 변환
     config["verbose"] = args.verbose
     config["norm"] = args.norm
+    config["loss"] = args.loss
     main(config)
