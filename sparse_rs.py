@@ -321,8 +321,8 @@ class RSAttack():
             iteration_start_loss = float('inf')
             if self.previous_best_img is not None:
                 iteration_start_loss = self.previous_best_loss
-                if self.verbose:
-                    print(f'Starting iteration with previous best loss: {iteration_start_loss}')
+                # if self.verbose:
+                #     print(f'Starting iteration with previous best loss: {iteration_start_loss}')
             
             adv = img.clone()
             c, h, w = img.shape[1:]
@@ -415,10 +415,12 @@ class RSAttack():
                 else:
                     # decision_loss 미사용 시: previous_best_loss보다 작으면 업데이트
                     should_update_iteration = loss_min < self.previous_best_loss
-                    if self.verbose:
-                        print(f'Loss check: {loss_min:.4f} {"< " if should_update_iteration else ">= "}{self.previous_best_loss:.4f}')
+                    # if self.verbose:
+                        # print(f'Loss check: {loss_min:.4f} {"< " if should_update_iteration else ">= "}{self.previous_best_loss:.4f}')
                 
                 if iteration_start_loss != float('inf') and not should_update_iteration:
+                    if self.verbose:
+                        print(f'No improvement: returning previous best image')
                     # 개선되지 않았으므로 이전 이미지 반환
                     # print(f'No improvement: returning previous best image')
                     return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
@@ -427,6 +429,8 @@ class RSAttack():
                     self.previous_best_img = x_best.clone()
                     self.previous_best_loss = loss_min
                     self.previous_best_changed_pixels = best_changed_pixels
+                    if self.verbose:
+                        print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min.item():.4f}')
                     # print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min.item():.4f}')
 
             elif self.norm == 'patches':
