@@ -116,8 +116,44 @@ class RSAttack():
         self.previous_best_changed_pixels = None
         
     def margin_and_loss(self, img, final_mask, first_img_pred_labels):
-        adv_result = inference_model(self.model, img.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
-        adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (Class, H, W)
+        # 모델 타입 확인: mmseg 모델인지 pytorch 모델인지 판단
+        # DataParallel의 경우 module 속성을 확인
+        actual_model = self.model.module if hasattr(self.model, 'module') else self.model
+        is_mmseg_model = hasattr(actual_model, 'cfg') and hasattr(actual_model, 'test_pipeline')
+        
+        if is_mmseg_model:
+            # 기존 mmseg API 사용
+            adv_result = inference_model(self.model, img.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
+            adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (Class, H, W)
+        else:
+            # pytorch 모델 직접 사용
+            # img가 (1, C, H, W) 형태인지 확인
+            if len(img.shape) == 3:
+                img_input = img.unsqueeze(0)  # (C, H, W) -> (1, C, H, W)
+            else:
+                img_input = img
+            
+            # 정규화된 입력으로 변환 (BGR -> 정규화)
+            value_scale = 255
+            mean = [0.406 * value_scale, 0.456 * value_scale, 0.485 * value_scale]  # BGR
+            std = [0.225 * value_scale, 0.224 * value_scale, 0.229 * value_scale]   # BGR
+            
+            img_normalized = img_input.clone().float()
+            for t, m, s in zip(img_normalized[0], mean, std):
+                t.sub_(m).div_(s)
+            
+            # 모델 추론
+            with torch.no_grad():
+                model_output = self.model(img_normalized)
+                # 출력이 tuple인 경우 첫 번째 요소 사용
+                if isinstance(model_output, (tuple, list)):
+                    adv_logits = model_output[0]
+                else:
+                    adv_logits = model_output
+                
+                # (1, C, H, W) -> (C, H, W)
+                adv_logits = adv_logits.squeeze(0).to(self.device)
+        
         gt_indices = final_mask.float().argmax(dim=0)  # (H, W)
         # 2. 정답 로짓
         correct_logits = adv_logits.gather(0, gt_indices.unsqueeze(0)).squeeze(0)  # (H, W)
@@ -1006,23 +1042,64 @@ class RSAttack():
 
         first_img = img.squeeze(0) # Shape: (C, H, W)
         gt = gt.squeeze(0) # Shape: (H, W)
+        
+        # 모델 타입 확인
+        # DataParallel의 경우 module 속성을 확인
+        actual_model = self.model.module if hasattr(self.model, 'module') else self.model
+        is_mmseg_model = hasattr(actual_model, 'cfg') and hasattr(actual_model, 'test_pipeline')
+        
         with torch.no_grad():
             # 1. Get original logits and predictions
             try:
-                first_img_result = inference_model(self.model, first_img.permute(1, 2, 0).cpu().numpy()) # Pass Tensor
+                if is_mmseg_model:
+                    # 기존 mmseg API 사용
+                    first_img_result = inference_model(self.model, first_img.permute(1, 2, 0).cpu().numpy()) # Pass Tensor
+                    first_img_logits = first_img_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
+                    first_img_probs = softmax(first_img_logits, dim=0).to(self.device) # Shape: (C, H, W)
+                    first_img_pred_labels = first_img_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+                else:
+                    # pytorch 모델 직접 사용
+                    img_input = first_img.unsqueeze(0)  # (C, H, W) -> (1, C, H, W)
+                    
+                    # 정규화된 입력으로 변환 (BGR -> 정규화)
+                    value_scale = 255
+                    mean = [0.406 * value_scale, 0.456 * value_scale, 0.485 * value_scale]  # BGR
+                    std = [0.225 * value_scale, 0.224 * value_scale, 0.229 * value_scale]   # BGR
+                    
+                    img_normalized = img_input.clone().float()
+                    for t, m, s in zip(img_normalized[0], mean, std):
+                        t.sub_(m).div_(s)
+                    
+                    # 모델 추론
+                    model_output = self.model(img_normalized)
+                    # 출력이 tuple인 경우 첫 번째 요소 사용
+                    if isinstance(model_output, (tuple, list)):
+                        first_img_logits = model_output[0]
+                    else:
+                        first_img_logits = model_output
+                    
+                    # (1, C, H, W) -> (C, H, W)
+                    first_img_logits = first_img_logits.squeeze(0).to(self.device)
+                    first_img_probs = softmax(first_img_logits, dim=0).to(self.device) # Shape: (C, H, W)
+                    first_img_pred_labels = torch.argmax(first_img_logits, dim=0).to(self.device) # Shape: (H, W)
+                    
             except Exception as e:
                 print("\n--- Error calling inference_model (Original Image) ---")
                 raise e
-            first_img_logits = first_img_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
-            first_img_probs = softmax(first_img_logits, dim=0).to(self.device) # Shape: (C, H, W)
-            first_img_pred_labels = first_img_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
 
             if self.mask is None:
                 
-                original_img_result = inference_model(self.model, first_img.permute(1, 2, 0).cpu().numpy())
-                original_img_logits = original_img_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
-                original_img_probs = softmax(original_img_logits, dim=0).to(self.device) # Shape: (C, H, W)
-                original_img_pred_labels = original_img_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+                if is_mmseg_model:
+                    # 기존 mmseg API 사용
+                    original_img_result = inference_model(self.model, first_img.permute(1, 2, 0).cpu().numpy())
+                    original_img_logits = original_img_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
+                    original_img_probs = softmax(original_img_logits, dim=0).to(self.device) # Shape: (C, H, W)
+                    original_img_pred_labels = original_img_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+                else:
+                    # pytorch 모델 직접 사용 (이미 위에서 계산됨)
+                    original_img_logits = first_img_logits
+                    original_img_probs = first_img_probs
+                    original_img_pred_labels = first_img_pred_labels
                 
                 self.original_pred_labels = original_img_pred_labels.clone()
                 
