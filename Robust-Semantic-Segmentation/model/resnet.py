@@ -12,8 +12,7 @@ __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
     'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
-    # 'resnet50': 'https://download.pytorch.org/models/resnet50-19c8e357.pth',
-    'resnet50': 'https://download.pytorch.org/models/resnet50-0676ba61.pth',
+    'resnet50': 'https://download.pytorch.org/models/resnet50-19c8e357.pth',
     'resnet101': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
     'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
 }
@@ -200,9 +199,9 @@ def resnet50(pretrained=False, **kwargs):
     """
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet50']))
-        # model_path = '/mnt/proj3/xgxu/semseg_mp/initmodel/resnet50_v2.pth'
-        # model.load_state_dict(torch.load(model_path), strict=False)
+        # model.load_state_dict(model_zoo.load_url(model_urls['resnet50']))
+        model_path = '/mnt/proj3/xgxu/semseg_mp/initmodel/resnet50_v2.pth'
+        model.load_state_dict(torch.load(model_path), strict=False)
     return model
 
 
@@ -214,9 +213,9 @@ def resnet101(pretrained=False, **kwargs):
     """
     model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet101']))
-        # model_path = '/mnt/proj3/xgxu/semseg_mp/initmodel/resnet101_v2.pth'
-        # model.load_state_dict(torch.load(model_path), strict=False)
+        # model.load_state_dict(model_zoo.load_url(model_urls['resnet101']))
+        model_path = '/mnt/proj3/xgxu/semseg_mp/initmodel/resnet101_v2.pth'
+        model.load_state_dict(torch.load(model_path), strict=False)
     return model
 
 
@@ -228,7 +227,7 @@ def resnet152(pretrained=False, **kwargs):
     """
     model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet152']))
-        # model_path = './initmodel/resnet152_v2.pth'
-        # model.load_state_dict(torch.load(model_path), strict=False)
+        # model.load_state_dict(model_zoo.load_url(model_urls['resnet152']))
+        model_path = './initmodel/resnet152_v2.pth'
+        model.load_state_dict(torch.load(model_path), strict=False)
     return model

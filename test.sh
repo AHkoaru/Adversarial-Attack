@@ -14,7 +14,10 @@
 
 
 python rs_eval.py \
-    --config configs_attack/voc2012/config_pspnet.py
+    --config configs_attack/voc2012/config_pspnet.py\
+    --iter 5\
+    --num_images 3
+
 
 python rs_eval.py \
     --config configs_attack/voc2012/config_seg.py\
@@ -28,9 +31,7 @@ python rs_eval.py \
     --eps 0.04
 
 python rs_eval.py \
-    --config configs_attack/ade20k/config_setr.py \
-    --norm patches\
-    --eps 0.04
+    --config configs_attack/cityscapes/config_setr.py
 
 # python rs_eval.py \
 #     --config configs_attack/cityscapes/config_deepdlabv3.py

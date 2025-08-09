@@ -1,0 +1,4 @@
+torch==1.0.1.post2
+torchvision==0.2.1
+numpy==1.14.3
+argparse==1.1

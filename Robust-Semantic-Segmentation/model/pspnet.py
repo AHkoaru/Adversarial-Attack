@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-import resnet as models
+import model.resnet as models
 import numpy as np
 import copy
 
@@ -469,7 +469,7 @@ class PSPNet_DDCAT(nn.Module):
 
 if __name__ == '__main__':
     import os
-    os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+    os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1'
     input = torch.rand(4, 3, 473, 473).cuda()
     model = PSPNet(layers=50, bins=(1, 2, 3, 6), dropout=0.1, classes=21, zoom_factor=1, use_ppm=True, pretrained=True).cuda()
     model.eval()

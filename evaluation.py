@@ -9,20 +9,39 @@ def eval_miou(model, dataset, adv_examples, gt_images, config):
     
     Args:
         model: Segmentation model to evaluate
-        dataset: Dataset containing original images and ground truth
-        adv_examples: List of adversarial examples
+        dataset: Dataset containing original images (list of numpy arrays)
+        adv_examples: List of adversarial examples (list of numpy arrays)
+        gt_images: List of ground truth images
         config: Configuration dictionary containing number of classes
         
     Returns:
         tuple: (benign_miou_score, adv_miou_score) containing Mean IoU scores for both cases
     """
+    import sys
+    import os
+    sys.path.append('/workspace/Robust-Semantic-Segmentation')
+    from adv_setting import model_predict
+    
     miou = evaluate.load("mean_iou")
 
     benign_predictions = []
     adv_predictions = []
+    
+    # Check if model has 'cfg' attribute (mmseg model) or is DataParallel wrapped
+    is_mmseg = hasattr(model, 'cfg') or (hasattr(model, 'module') and hasattr(model.module, 'cfg'))
+    
     for i in range(len(dataset)):
-        benign_predictions.append(inference_model(model, dataset[i]).pred_sem_seg.data.squeeze(0).cpu().numpy().astype(np.uint8))
-        adv_predictions.append(inference_model(model, adv_examples[i]).pred_sem_seg.data.squeeze(0).cpu().numpy().astype(np.uint8))
+        if is_mmseg:
+            # Use mmseg inference_model for mmseg models
+            benign_predictions.append(inference_model(model, dataset[i]).pred_sem_seg.data.squeeze(0).cpu().numpy().astype(np.uint8))
+            adv_predictions.append(inference_model(model, adv_examples[i]).pred_sem_seg.data.squeeze(0).cpu().numpy().astype(np.uint8))
+        else:
+            # Use model_predict for Robust models
+            _, benign_pred = model_predict(model, dataset[i], config)
+            benign_predictions.append(benign_pred.cpu().numpy().astype(np.uint8))
+            
+            _, adv_pred = model_predict(model, adv_examples[i], config)
+            adv_predictions.append(adv_pred.cpu().numpy().astype(np.uint8))
 
     
     if config["dataset"] == "cityscapes":
