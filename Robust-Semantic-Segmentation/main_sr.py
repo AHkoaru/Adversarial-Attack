@@ -350,7 +350,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run Sparse-RS attack evaluation using Robust models.")
     parser.add_argument("--config", type=str, required=True, 
                         choices=["pspnet_sat_voc", "pspnet_sat_city", "pspnet_vanilla_voc", "pspnet_vanilla_city",
-                               "deeplabv3_sat_voc", "deeplabv3_sat_city", "deeplabv3_vanilla_voc", "deeplabv3_vanilla_city"],
+                               "pspnet_ddcat_voc", "pspnet_ddcat_city",
+                               "deeplabv3_sat_voc", "deeplabv3_sat_city", "deeplabv3_vanilla_voc", "deeplabv3_vanilla_city",
+                               "deeplabv3_ddcat_voc", "deeplabv3_ddcat_city"],
                         help="Config file to use (without .py extension).")
     parser.add_argument('--device', type=str, default='cuda', help='Device to use (cuda or cpu).')
     parser.add_argument('--n_queries', type=int, default=10, help='Max number of queries for RSAttack.')
