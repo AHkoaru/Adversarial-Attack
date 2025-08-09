@@ -259,8 +259,26 @@ def save_experiment_results(results, config, sweep_config=None, timestamp=None, 
     # Experimental Results 섹션 (각 항목은 한 줄에 key: value 형식으로 출력)
     lines.append("\n[Experimental Results]")
     for key, value in results.items():
-        line = f"{key}: " + json.dumps(value, ensure_ascii=False, cls=CustomJSONEncoder)
-        lines.append(line)
+        if "Per-category IoU" in key and isinstance(value, list) and len(value) > 0:
+            # Per-category IoU의 경우 쿼리별로 줄바꿈하여 가독성 개선
+            lines.append(f"{key}:")
+            for i, query_result in enumerate(value):
+                query_label = ["1000query", "2000query", "3000query", "4000query", "5000query"][i]
+                if isinstance(query_result, list):
+                    # NaN 값들을 "NaN"으로 변환하여 보기 좋게 처리
+                    formatted_values = []
+                    for val in query_result:
+                        if val is None or (isinstance(val, float) and np.isnan(val)):
+                            formatted_values.append("NaN")
+                        else:
+                            formatted_values.append(f"{val:.4f}" if isinstance(val, float) else str(val))
+                    lines.append(f"  {query_label}: [{', '.join(formatted_values)}]")
+                else:
+                    lines.append(f"  {query_label}: {json.dumps(query_result, ensure_ascii=False, cls=CustomJSONEncoder)}")
+        else:
+            # 다른 결과들은 기존 방식으로 저장
+            line = f"{key}: " + json.dumps(value, ensure_ascii=False, cls=CustomJSONEncoder)
+            lines.append(line)
     
     os.makedirs(save_dir, exist_ok=True)
     with open(file_path, "w", encoding="utf-8") as f:
