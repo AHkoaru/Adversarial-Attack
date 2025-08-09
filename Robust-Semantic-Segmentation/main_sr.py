@@ -6,6 +6,7 @@ import numpy as np
 from PIL import Image
 import sys
 import argparse
+import setproctitle
 
 # Add current directory to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -34,6 +35,8 @@ def load_config_from_yaml(config_path):
 def process_single_image_robust(args):
     """Process single image using Robust models instead of mmseg"""
     (img_bgr, filename, gt, model_config, config, base_dir, idx, total_images) = args
+    
+    setproctitle.setproctitle(f"({idx+1}/{total_images})_SparseRS_Attack_{config['dataset']}_{config['model']}_{config['iters']}_{config['attack_pixel']}_{config['loss']}")
     
     # Load model using adv_setting.py
     model = load_model(model_config)
