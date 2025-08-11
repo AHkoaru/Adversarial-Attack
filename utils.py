@@ -263,7 +263,7 @@ def save_experiment_results(results, config, sweep_config=None, timestamp=None, 
             # Per-category IoU의 경우 쿼리별로 줄바꿈하여 가독성 개선
             lines.append(f"{key}:")
             for i, query_result in enumerate(value):
-                query_label = ["1000query", "2000query", "3000query", "4000query", "5000query"][i]
+                query_label = ["0query", "1000query", "2000query", "3000query", "4000query", "5000query"][i]
                 if isinstance(query_result, list):
                     # NaN 값들을 "NaN"으로 변환하여 보기 좋게 처리
                     formatted_values = []

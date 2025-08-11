@@ -17,26 +17,18 @@ from adv_setting import model_predict, load_model, set_seed
 
 # Import from parent directory
 from dataset import CitySet, ADESet, VOCSet
-from sparse_rs import RSAttack
+from pixle import Pixle
 from function import *
 from evaluation import *
 from utils import save_experiment_results
 from config import voc, config_city
 
 
-def load_config_from_yaml(config_path):
-    """Load configuration from YAML file"""
-    import yaml
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    return config
-
-
 def process_single_image_robust(args):
     """Process single image using Robust models instead of mmseg"""
     (img_bgr, filename, gt, model_config, config, base_dir, idx, total_images) = args
     
-    setproctitle.setproctitle(f"({idx+1}/{total_images})_SparseRS_Attack_{config['dataset']}_{config['model']}_{config['iters']}_{config['attack_pixel']}_{config['loss']}")
+    setproctitle.setproctitle(f"({idx+1}/{total_images})_Pixle_Attack_{config['dataset']}_{config['model']}_{config['attack_pixel']}")
     
     # Load model using adv_setting.py
     model = load_model(model_config)
@@ -59,42 +51,6 @@ def process_single_image_robust(args):
     ori_confidence, ori_pred = model_predict(model, img_bgr_np, model_config)
     ori_pred = ori_pred.cpu().numpy()
 
-    # Create attack object
-    attack = RSAttack(
-        model=model,
-        cfg=config,
-        norm=config["norm"],
-        n_queries=config["n_queries"],
-        eps=config["eps"],
-        p_init=config["p_init"],
-        n_restarts=config["n_restarts"],
-        seed=0,
-        verbose=config.get("verbose", False),
-        targeted=False,
-        loss=config["loss"],
-        resc_schedule=True,
-        device=config["device"],
-        log_path=None,
-        original_img=img_bgr_np,
-        d=5,
-        use_decision_loss=config["use_decision_loss"]
-    )
-
-    adv_img_bgr_list = []
-    total_queries = config["iters"] * config["n_queries"]
-    save_steps = [int(total_queries * (i+1) / 5) for i in range(5)]
-    
-    for iter_idx in range(config["iters"]):
-        current_query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
-        img_tensor_bgr = adv_img_bgr
-        
-        if current_query in save_steps:
-            adv_img_bgr_list.append(adv_img_bgr)
-    
-    # Fill remaining save_steps if not reached
-    while len(adv_img_bgr_list) < 5:
-        adv_img_bgr_list.append(adv_img_bgr)
-
     # Save results
     current_img_save_dir = os.path.join(base_dir, os.path.splitext(os.path.basename(filename))[0])
     os.makedirs(current_img_save_dir, exist_ok=True)
@@ -107,42 +63,80 @@ def process_single_image_robust(args):
     l0_metrics = [0]  # L0 norm is 0 for original image
     ratio_metrics = [0]  # Pixel ratio is 0 for original image
     impact_metrics = [0]  # Impact is 0 for original image
+
+    # Calculate the number of pixels per patch
+    _, _, H, W = img_tensor_bgr.shape
+    total_target_pixels_overall = H * W * config["attack_pixel"]
+    pixels_per_single_patch_target = total_target_pixels_overall / 250
+
+    # === 패치 크기 계산 로직 ===
+    target_area_int = int(round(pixels_per_single_patch_target))
+
+    h_found = 1 # 기본값 (target_area_int가 소수이거나 1인 경우)
+    for h_candidate in range(int(np.sqrt(target_area_int)), 0, -1): 
+        if target_area_int % h_candidate == 0:
+            h_found = h_candidate
+            break
+    patch_h_pixels = h_found
+    patch_w_pixels = target_area_int // patch_h_pixels
+    # === 패치 크기 계산 로직 끝 ===
     
-    for i, adv_img_bgr in enumerate(adv_img_bgr_list):
+    pixle = Pixle( 
+        model,
+        x_dimensions=(patch_w_pixels, patch_w_pixels), 
+        y_dimensions=(patch_h_pixels, patch_h_pixels), 
+        restarts=250,
+        max_iterations=20,
+        threshold=21000,
+        device=config["device"],
+        cfg=config
+    )
+
+    # Ensure input tensor is on the correct device and potentially float
+    results = pixle.forward(img_tensor_bgr, gt_tensor)
+
+    # Process results (assuming results['adv_images'] are BGR tensors)
+    adv_examples_bgr_numpy = [(x.squeeze(0).permute(1, 2, 0).cpu().numpy()).astype(np.uint8) for x in results['adv_images']]
+    adv_examples_rgb_numpy = [x[:, :, ::-1] for x in adv_examples_bgr_numpy] # Convert to RGB for saving and metrics
+    
+    for i in range(5):
         query_img_save_dir = os.path.join(current_img_save_dir, f"{i+1}000query")
         os.makedirs(query_img_save_dir, exist_ok=True)
 
-        adv_img_bgr_np = adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+        current_adv_img_rgb = adv_examples_rgb_numpy[i]
+        current_adv_img_bgr = adv_examples_bgr_numpy[i]
         
         # Get adversarial prediction using model_predict from adv_setting.py
-        adv_confidence, adv_pred = model_predict(model, adv_img_bgr_np, model_config)
+        adv_confidence, adv_pred = model_predict(model, current_adv_img_bgr, model_config)
         adv_pred = adv_pred.cpu().numpy()
         
-        delta_img = np.abs(img_bgr_np.astype(np.int16) - adv_img_bgr_np.astype(np.int16)).astype(np.uint8)
-    
-        Image.fromarray(adv_img_bgr_np[:, :, ::-1]).save(os.path.join(query_img_save_dir, "adv.png"))
+        # Save adversarial image (RGB)
+        Image.fromarray(current_adv_img_rgb).save(os.path.join(query_img_save_dir, "adv.png"))
+
+        # Calculate and save delta image
+        delta_img = np.abs(img_bgr_np[:, :, ::-1].astype(np.int16) - current_adv_img_rgb.astype(np.int16)).astype(np.uint8)
         Image.fromarray(delta_img).save(os.path.join(query_img_save_dir, "delta.png"))
         
         # Visualize segmentation results
-        visualize_segmentation(img_bgr_np, ori_pred,
+        visualize_segmentation(img_bgr_np[:, :, ::-1], ori_pred,
                             save_path=os.path.join(query_img_save_dir, "ori_seg.png"),
                             alpha=0.5, dataset=config["dataset"])
         
-        visualize_segmentation(img_bgr_np, ori_pred,
+        visualize_segmentation(img_bgr_np[:, :, ::-1], ori_pred,
                             save_path=os.path.join(query_img_save_dir, "ori_seg_only.png"),
                             alpha=1, dataset=config["dataset"])
         
-        visualize_segmentation(adv_img_bgr_np, adv_pred,
+        visualize_segmentation(current_adv_img_rgb, adv_pred,
                             save_path=os.path.join(query_img_save_dir, "adv_seg.png"),
                             alpha=0.5, dataset=config["dataset"])
         
-        visualize_segmentation(adv_img_bgr_np, adv_pred,
+        visualize_segmentation(current_adv_img_rgb, adv_pred,
                             save_path=os.path.join(query_img_save_dir, "adv_seg_only.png"),
                             alpha=1, dataset=config["dataset"])
         
-        l0_norm = calculate_l0_norm(img_bgr_np, adv_img_bgr_np)
-        pixel_ratio = calculate_pixel_ratio(img_bgr_np, adv_img_bgr_np)
-        impact = calculate_impact(img_bgr_np, adv_img_bgr_np, ori_pred, adv_pred)
+        l0_norm = calculate_l0_norm(img_bgr_np[:, :, ::-1], current_adv_img_rgb)
+        pixel_ratio = calculate_pixel_ratio(img_bgr_np[:, :, ::-1], current_adv_img_rgb)
+        impact = calculate_impact(img_bgr_np[:, :, ::-1], current_adv_img_rgb, ori_pred, adv_pred)
         
         print(f"L0 norm: {l0_norm}, Pixel ratio: {pixel_ratio}, Impact: {impact}")
 
@@ -152,20 +146,18 @@ def process_single_image_robust(args):
 
     # Clean up memory
     del model
-    del attack
+    del pixle
     torch.cuda.empty_cache()
     
     return {
         'img_bgr': img_bgr_np,
         'gt': gt,
         'filename': filename,
-        'adv_img_bgr_list': adv_img_bgr_list,
+        'adv_img_bgr_list': adv_examples_bgr_numpy,
         'l0_metrics': l0_metrics,
         'ratio_metrics': ratio_metrics,
         'impact_metrics': impact_metrics
     }
-
-
 
 
 def main(config, model_config):
@@ -203,7 +195,7 @@ def main(config, model_config):
 
     # Setup result directories
     current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_name = f"{config['dataset']}_{config['model']}_sparse-rs_{current_time}"
+    experiment_name = f"{config['dataset']}_{config['model']}_pixle_{current_time}"
     base_dir = os.path.join(config["base_dir"], current_time)
     os.makedirs(base_dir, exist_ok=True, mode=0o777)
     
@@ -215,7 +207,7 @@ def main(config, model_config):
     # Sequential processing
     print(f"Sequential processing for {len(process_args)} images...")
     results = []
-    for args in tqdm(process_args, total=len(process_args), desc="Running Sparse-RS Attack"):
+    for args in tqdm(process_args, total=len(process_args), desc="Running Pixle Attack"):
         result = process_single_image_robust(args)
         results.append(result)
     
@@ -241,7 +233,7 @@ def main(config, model_config):
         
         # Add attack results (query 1-5)
         for i, adv_img_bgr in enumerate(result['adv_img_bgr_list']):
-            adv_img_lists[i+1].append(adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8))
+            adv_img_lists[i+1].append(adv_img_bgr)
             all_l0_metrics[i+1].append(result['l0_metrics'][i+1])
             all_ratio_metrics[i+1].append(result['ratio_metrics'][i+1])
             all_impact_metrics[i+1].append(result['impact_metrics'][i+1])
@@ -357,7 +349,7 @@ def main(config, model_config):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Run Sparse-RS attack evaluation using Robust models.")
+    parser = argparse.ArgumentParser(description="Run Pixle attack evaluation using Robust models.")
     parser.add_argument("--config", type=str, required=True, 
                         choices=["pspnet_sat_voc", "pspnet_sat_city", "pspnet_vanilla_voc", "pspnet_vanilla_city",
                                "pspnet_ddcat_voc", "pspnet_ddcat_city",
@@ -365,16 +357,9 @@ if __name__ == '__main__':
                                "deeplabv3_ddcat_voc", "deeplabv3_ddcat_city"],
                         help="Config file to use (without .py extension).")
     parser.add_argument('--device', type=str, default='cuda', help='Device to use (cuda or cpu).')
-    parser.add_argument('--n_queries', type=int, default=10, help='Max number of queries for RSAttack.')
-    parser.add_argument('--eps', type=float, default=0.0001, help='Epsilon for L0 norm in RSAttack.')
-    parser.add_argument('--p_init', type=float, default=0.8, help='Initial probability p_init for RSAttack.')
-    parser.add_argument('--n_restarts', type=int, default=1, help='Number of restarts for RSAttack.')
+    parser.add_argument('--attack_pixel', type=float, default=0.01, help='Ratio of adversarial pixels to total image pixels.')
     parser.add_argument('--num_images', type=int, default=100, help='Number of images to evaluate from the dataset.')
-    parser.add_argument('--iters', type=int, default=500, help='Number of iterations for RSAttack.')
-    parser.add_argument('--use_decision_loss', type=str, default='False', choices=['True', 'False'], help='Whether to use decision loss.')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output.')
-    parser.add_argument('--norm', type=str, default='L0', choices=['L0', 'patches'], help='Norm for RSAttack.')
-    parser.add_argument('--loss', type=str, default='prob', choices=['margin', 'prob'], help='Loss function for RSAttack.')
     parser.add_argument('--data_dir', type=str, default=None, help='Path to dataset directory (overrides config file if specified).')
     args = parser.parse_args()
 
@@ -394,18 +379,10 @@ if __name__ == '__main__':
         "num_class": model_config["num_class"],
         "device": args.device,
         "data_dir": args.data_dir if args.data_dir is not None else model_config["data_dir"],
-        "attack_method": "Sparse-RS",
-        "n_queries": args.n_queries,
-        "eps": args.eps,
-        "attack_pixel": args.eps,
-        "p_init": args.p_init,
-        "n_restarts": args.n_restarts,
+        "attack_method": "PixelAttack",
+        "attack_pixel": args.attack_pixel,
         "num_images": args.num_images,
-        "iters": args.iters,
-        "use_decision_loss": args.use_decision_loss.lower() == 'true',
         "verbose": args.verbose,
-        "norm": args.norm,
-        "loss": args.loss,
     }
     
     # Copy model-specific parameters

@@ -63,7 +63,7 @@ def process_single_image(args):
     # 프로세스별 모델 초기화
     model = init_model_for_process(model_configs, config["dataset"], config["model"], config["device"])
     
-    setproctitle.setproctitle(f"({idx+1}/{total_images})_SparseRS_Attack_{config['dataset']}_{config['model']}_{config['iters']}_{config['attack_pixel']}_loss_{config['loss']}")
+    setproctitle.setproctitle(f"({idx+1}/{total_images})_SparseRS_Attack_{config['dataset']}_{config['model']}_{config['iters']}_{config['attack_pixel']}_{config['loss']}")
 
     img_tensor_bgr = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(config["device"])
     gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(config["device"])
