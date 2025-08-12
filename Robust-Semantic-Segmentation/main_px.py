@@ -379,7 +379,7 @@ if __name__ == '__main__':
         "num_class": model_config["num_class"],
         "device": args.device,
         "data_dir": args.data_dir if args.data_dir is not None else model_config["data_dir"],
-        "attack_method": "PixelAttack",
+        "attack_method": "Pixle",
         "attack_pixel": args.attack_pixel,
         "num_images": args.num_images,
         "verbose": args.verbose,

@@ -54,6 +54,10 @@ class Pixle():
     ):
         self.model = model
         self.device = device
+        self.cfg = cfg
+        
+        # Check if this is a robust model or mmseg model
+        self.is_mmseg_model = hasattr(model, 'cfg')
 
         if restarts < 0 or not isinstance(restarts, int):
             raise ValueError(
@@ -450,13 +454,21 @@ class Pixle():
         with torch.no_grad():
             # 1. Get original logits and predictions
             try:
-                original_result = inference_model(self.model, original_img.permute(1, 2, 0).cpu().numpy()) # Pass Tensor
+                if self.is_mmseg_model:
+                    # Use mmseg API for mmseg models
+                    original_result = inference_model(self.model, original_img.permute(1, 2, 0).cpu().numpy()) # Pass Tensor
+                    original_logits = original_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
+                    original_probs = softmax(original_logits, dim=0) # Shape: (C, H, W)
+                    original_pred_labels = original_result.pred_sem_seg.data.squeeze() # Shape: (H, W)
+                else:
+                    # Use model_predict for Robust models
+                    from adv_setting import model_predict
+                    img_np = original_img.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                    original_probs, original_pred_labels = model_predict(self.model, img_np, self.cfg)
+                    original_logits = torch.log(original_probs)
             except Exception as e:
-                print("\n--- Error calling inference_model (Original Image) ---")
+                print("\n--- Error calling inference (Original Image) ---")
                 raise e
-            original_logits = original_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
-            original_probs = softmax(original_logits, dim=0) # Shape: (C, H, W)
-            original_pred_labels = original_result.pred_sem_seg.data.squeeze() # Shape: (H, W)
 
             # 2. Create masks
             ignore_index = 255
@@ -508,11 +520,15 @@ class Pixle():
                  pert_image_tensor = pert_image_tensor.to(self.device)
 
             # 2. Get probabilities for the perturbed image
-
-            adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
- 
-            adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
-            adv_probs = softmax(adv_logits, dim=0) # Shape: (C, H, W)
+            if self.is_mmseg_model:
+                adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
+                adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
+                adv_probs = softmax(adv_logits, dim=0) # Shape: (C, H, W)
+            else:
+                # Use model_predict for Robust models
+                from adv_setting import model_predict
+                img_np = pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                adv_probs, _ = model_predict(self.model, img_np, self.cfg)
             
             adv_correct_probs = adv_probs[final_mask]
             # Average these probabilities
