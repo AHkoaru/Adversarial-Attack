@@ -359,6 +359,10 @@ def main(config):
     benign_to_adv_per_ious_excluding_label0 = []
     gt_to_adv_per_ious_excluding_label0 = []
     
+    # Per-category IoU (full)
+    benign_to_adv_per_ious = []
+    gt_to_adv_per_ious = []
+    
     for i in range(6):
         benign_to_adv_miou, gt_to_adv_miou = eval_miou(model, img_list, adv_img_lists[i], gt_list, config)
         
@@ -369,6 +373,17 @@ def main(config):
         gt_overall_accuracy.append(gt_to_adv_miou['overall_accuracy'].item())
         benign_mean_accuracy.append(benign_to_adv_miou['mean_accuracy'].item())
         benign_overall_accuracy.append(benign_to_adv_miou['overall_accuracy'].item())
+
+        # Save per-category IoU
+        if 'per_category_iou' in benign_to_adv_miou:
+            benign_to_adv_per_ious.append(benign_to_adv_miou['per_category_iou'].tolist())
+        else:
+            benign_to_adv_per_ious.append(None)
+            
+        if 'per_category_iou' in gt_to_adv_miou:
+            gt_to_adv_per_ious.append(gt_to_adv_miou['per_category_iou'].tolist())
+        else:
+            gt_to_adv_per_ious.append(None)
 
         # VOC2012 데이터셋일 때만 per_category_iou에서 label 0을 제외한 평균 계산
         if config["dataset"] == "VOC2012":
@@ -401,16 +416,19 @@ def main(config):
         mean_impact.append(np.mean(all_impact_metrics[i]).item())
 
     final_results = {
+        # Main metrics in the specified order
         "Init mIoU" : init_mious['mean_iou'],
-        "Average Adversarial mIoU(benign)" : benign_to_adv_mious,
-        "Average Accuracy(benign)": benign_mean_accuracy,
-        "Average Overall Accuracy(benign)": benign_overall_accuracy,
-        "Average Adversarial mIoU(gt)" : gt_to_adv_mious,
-        "Average Accuracy(gt)": gt_mean_accuracy,
-        "Average Overall Accuracy(gt)": gt_overall_accuracy,
-        "Average L0": mean_l0,
-        "Average Ratio": mean_ratio,
-        "Average Impact": mean_impact,
+        "Adversarial mIoU(benign)" : benign_to_adv_mious,
+        "Adversarial mIoU(gt)" : gt_to_adv_mious,
+        "Accuracy(benign)": benign_mean_accuracy,
+        "Overall Accuracy(benign)": benign_overall_accuracy,
+        "Accuracy(gt)": gt_mean_accuracy,
+        "Overall Accuracy(gt)": gt_overall_accuracy,
+        "L0": mean_l0,
+        "Ratio": mean_ratio,
+        "Impact": mean_impact,
+        "Per-category IoU(benign)": benign_to_adv_per_ious,
+        "Per-category IoU(gt)": gt_to_adv_per_ious,
     }
     
     # VOC2012 데이터셋일 때만 label 0을 제외한 mIoU 메트릭 추가
