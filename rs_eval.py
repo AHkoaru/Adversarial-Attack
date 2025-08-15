@@ -12,8 +12,8 @@ from functools import partial
 mp.set_start_method('spawn', force=True)
 
 from mmseg.apis import init_model, inference_model
-from dataset import CitySet, ADESet, VOCSet # main.py에서 사용된 데이터셋 클래스
-from sparse_rs import RSAttack # sparse-rs.py의 공격 클래스
+from dataset import CitySet, ADESet, VOCSet 
+from sparse_rs import RSAttack
 
 from function import *
 from evaluation import *
@@ -89,21 +89,25 @@ def process_single_image(args):
         log_path=None, # Disable logging for this simple test or provide a path
         original_img=img_bgr,
         d=5,
-        use_decision_loss=config["use_decision_loss"]
+        use_decision_loss=config["use_decision_loss"],
+        is_mmseg_model=True
     )
 
     adv_img_bgr_list = []
     total_queries = config["iters"] * config["n_queries"]
-    save_steps = [int(total_queries * (i+1) / 5) for i in range(5)]
+    save_steps = [0] + [int(total_queries * (i+1) / 5) for i in range(5)]  # Include 0 queries
+    
+    # Save original image as 0th result
+    adv_img_bgr_list.append(img_tensor_bgr)
     for iter_idx in range(config["iters"]):
         current_query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
         img_tensor_bgr = adv_img_bgr
         # 다음 iteration을 위해 업데이트
-        if current_query in save_steps:
+        if current_query in save_steps[1:]:  # Skip the 0 query check since it's already added
             adv_img_bgr_list.append(adv_img_bgr)
     
     # 모든 save_steps에 도달하지 못한 경우 마지막 결과로 채우기
-    while len(adv_img_bgr_list) < 5:
+    while len(adv_img_bgr_list) < 6:
         adv_img_bgr_list.append(adv_img_bgr)
 
     # 결과 저장
@@ -120,40 +124,48 @@ def process_single_image(args):
     impact_metrics = []
     
     for i, adv_img_bgr in enumerate(adv_img_bgr_list):
-        query_img_save_dir = os.path.join(current_img_save_dir, f"{i+1}000query")
-        os.makedirs(query_img_save_dir, exist_ok=True)
-
         adv_img_bgr = adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-        # 적대적 이미지에 대한 추론 (main.py 참조)
-        adv_result = inference_model(model, adv_img_bgr)
-        adv_pred = adv_result.pred_sem_seg.data.squeeze().cpu().numpy()
-        delta_img = np.abs(img_bgr.astype(np.int16) - adv_img_bgr.astype(np.int16)).astype(np.uint8)
-    
-        Image.fromarray(adv_img_bgr[:, :, ::-1]).save(os.path.join(query_img_save_dir, "adv.png"))
-        Image.fromarray(delta_img).save(os.path.join(query_img_save_dir, "delta.png"))
-        # 시각화된 분할 마스크 저장 (main.py의 visualize_segmentation 사용)
+        
+        # For original image (i==0), only calculate metrics without saving images
+        if i == 0:
+            l0_norm = 0
+            pixel_ratio = 0.0
+            impact = 0.0
+        else:
+            # Create query-specific directory for adversarial images only
+            query_img_save_dir = os.path.join(current_img_save_dir, f"{i}000query")
+            os.makedirs(query_img_save_dir, exist_ok=True)
+            
+            # 적대적 이미지에 대한 추론 (main.py 참조)
+            adv_result = inference_model(model, adv_img_bgr)
+            adv_pred = adv_result.pred_sem_seg.data.squeeze().cpu().numpy()
+            delta_img = np.abs(img_bgr.astype(np.int16) - adv_img_bgr.astype(np.int16)).astype(np.uint8)
+            
+            l0_norm = calculate_l0_norm(img_bgr, adv_img_bgr)
+            pixel_ratio = calculate_pixel_ratio(img_bgr, adv_img_bgr)
+            impact = calculate_impact(img_bgr, adv_img_bgr, ori_pred, adv_pred)
+        
+            Image.fromarray(adv_img_bgr[:, :, ::-1]).save(os.path.join(query_img_save_dir, "adv.png"))
+            Image.fromarray(delta_img).save(os.path.join(query_img_save_dir, "delta.png"))
+            # 시각화된 분할 마스크 저장 (main.py의 visualize_segmentation 사용)
 
-        visualize_segmentation(img_bgr, ori_pred,
-                            save_path=os.path.join(query_img_save_dir, "ori_seg.png"),
-                            alpha=0.5, dataset=config["dataset"]) # 데이터셋에 맞는 팔레트 사용
-        
-        visualize_segmentation(img_bgr, ori_pred,
-                            save_path=os.path.join(query_img_save_dir, "ori_seg_only.png"),
-                            alpha=1, dataset=config["dataset"])
-        
-        visualize_segmentation(adv_img_bgr, adv_pred,
-                            save_path=os.path.join(query_img_save_dir, "adv_seg.png"),
-                            alpha=0.5, dataset=config["dataset"])
-        
-        visualize_segmentation(adv_img_bgr, adv_pred,
-                            save_path=os.path.join(query_img_save_dir, "adv_seg_only.png"),
-                            alpha=1, dataset=config["dataset"])
+            visualize_segmentation(img_bgr, ori_pred,
+                                save_path=os.path.join(query_img_save_dir, "ori_seg.png"),
+                                alpha=0.5, dataset=config["dataset"]) # 데이터셋에 맞는 팔레트 사용
+            
+            visualize_segmentation(img_bgr, ori_pred,
+                                save_path=os.path.join(query_img_save_dir, "ori_seg_only.png"),
+                                alpha=1, dataset=config["dataset"])
+            
+            visualize_segmentation(adv_img_bgr, adv_pred,
+                                save_path=os.path.join(query_img_save_dir, "adv_seg.png"),
+                                alpha=0.5, dataset=config["dataset"])
+            
+            visualize_segmentation(adv_img_bgr, adv_pred,
+                                save_path=os.path.join(query_img_save_dir, "adv_seg_only.png"),
+                                alpha=1, dataset=config["dataset"])
         
     
-        l0_norm = calculate_l0_norm(img_bgr, adv_img_bgr)
-        pixel_ratio = calculate_pixel_ratio(img_bgr, adv_img_bgr)
-        impact = calculate_impact(img_bgr, adv_img_bgr, ori_pred, adv_pred)
-        
         print(f"L0 norm: {l0_norm}, Pixel ratio: {pixel_ratio}, Impact: {impact}")
 
         l0_metrics.append(l0_norm)
@@ -299,10 +311,10 @@ def main(config):
     img_list = []
     gt_list = []
     filename_list = []
-    adv_img_lists = [[] for _ in range(5)]
-    all_l0_metrics = [[] for _ in range(5)] 
-    all_ratio_metrics = [[] for _ in range(5)] 
-    all_impact_metrics = [[] for _ in range(5)] 
+    adv_img_lists = [[] for _ in range(6)]
+    all_l0_metrics = [[] for _ in range(6)] 
+    all_ratio_metrics = [[] for _ in range(6)] 
+    all_impact_metrics = [[] for _ in range(6)] 
 
     for result in results:
         img_list.append(result['img_bgr'])
@@ -347,7 +359,7 @@ def main(config):
     benign_to_adv_per_ious_excluding_label0 = []
     gt_to_adv_per_ious_excluding_label0 = []
     
-    for i in range(5):
+    for i in range(6):
         benign_to_adv_miou, gt_to_adv_miou = eval_miou(model, img_list, adv_img_lists[i], gt_list, config)
         
         # 기존 메트릭들

@@ -27,7 +27,7 @@ from function import *
 from evaluation import *
 from tqdm import tqdm
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '../Robust-Semantic-Segmentation'))
+sys.path.append(os.path.join(os.path.dirname(__file__), 'Robust-Semantic-Segmentation'))
 from adv_setting import model_predict
 
 class RSAttack():

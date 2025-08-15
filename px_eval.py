@@ -162,12 +162,12 @@ def main(config):
     img_list = []
     gt_list = []
     filename_list = []
-    adv_img_lists = [[] for _ in range(5)] # Store adv images for each iteration level
-    adv_query_lists = [[] for _ in range(5)] # Store adv query for each iteration level
+    adv_img_lists = [[] for _ in range(6)] # Store adv images for each iteration level (0-5)
+    adv_query_lists = [[] for _ in range(6)] # Store adv query for each iteration level (0-5)
     # Change to 2D lists to match rs_eval.py style
-    all_l0_metrics = [[] for _ in range(5)]
-    all_ratio_metrics = [[] for _ in range(5)]
-    all_impact_metrics = [[] for _ in range(5)]
+    all_l0_metrics = [[] for _ in range(6)]
+    all_ratio_metrics = [[] for _ in range(6)]
+    all_impact_metrics = [[] for _ in range(6)]
 
     #Record start time
     start_time = datetime.datetime.now()
@@ -228,7 +228,8 @@ def main(config):
             max_iterations=20,
             threshold=21000,
             device=device,
-            cfg = config
+            cfg = config,
+            is_mmseg_model=True
         )
 
         # Ensure input tensor is on the correct device and potentially float
@@ -243,10 +244,25 @@ def main(config):
         img_list.append(img_bgr) # Store original BGR image
         gt_list.append(gt)
         filename_list.append(filename) # Store the original full filename maybe for reference
+        
+        # Store original image as 0th query result
+        adv_img_lists[0].append(img_bgr) # Store original BGR image as 0th result
+        adv_query_lists[0].append(0) # 0 queries for original
+        
         for i in range(5):
-            adv_img_lists[i].append(adv_examples_bgr_numpy[i]) # Store BGR adv image
-            adv_query_lists[i].append(example_query[i])
+            adv_img_lists[i+1].append(adv_examples_bgr_numpy[i]) # Store BGR adv image
+            adv_query_lists[i+1].append(example_query[i])
         # --- Loop for saving iteration-specific results and calculating metrics (rs_eval.py style) ---
+        # Store metrics for original image (all should be 0) without saving images
+        l0 = 0  # No perturbation
+        ratio = 0.0  # No changed pixels
+        impact = 0.0  # No segmentation change
+        
+        # Append metrics for original image
+        all_l0_metrics[0].append(l0)
+        all_ratio_metrics[0].append(ratio)
+        all_impact_metrics[0].append(impact)
+        
         for i in range(5):
             # Create query-specific directory for this image
             query_img_save_dir = os.path.join(current_img_save_dir, f"{i+1}000query")
@@ -290,9 +306,9 @@ def main(config):
             impact = calculate_impact(img, current_adv_img_rgb, ori_pred, adv_pred)
 
             # Append metrics for this image and iteration level (rs_eval.py style)
-            all_l0_metrics[i].append(l0)
-            all_ratio_metrics[i].append(ratio)
-            all_impact_metrics[i].append(impact)
+            all_l0_metrics[i+1].append(l0)
+            all_ratio_metrics[i+1].append(ratio)
+            all_impact_metrics[i+1].append(impact)
         # --- End of inner loop (i=0 to 4) ---
     # --- End of dataset loop ---
 
@@ -313,7 +329,7 @@ def main(config):
     benign_to_adv_per_ious_excluding_label0 = []
     gt_to_adv_per_ious_excluding_label0 = []
     
-    for i in range(5):
+    for i in range(6):
         benign_to_adv_miou, gt_to_adv_miou = eval_miou(model, img_list, adv_img_lists[i], gt_list, config)
         
         # 기존 메트릭들
