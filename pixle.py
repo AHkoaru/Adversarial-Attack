@@ -50,14 +50,15 @@ class Pixle():
         update_each_iteration=False,
         threshold=2250,
         device=None,
-        cfg = None
+        cfg = None,
+        is_mmseg_model=False
     ):
         self.model = model
         self.device = device
         self.cfg = cfg
         
         # Check if this is a robust model or mmseg model
-        self.is_mmseg_model = hasattr(model, 'cfg')
+        self.is_mmseg_model = is_mmseg_model
 
         if restarts < 0 or not isinstance(restarts, int):
             raise ValueError(

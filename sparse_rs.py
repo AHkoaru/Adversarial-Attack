@@ -151,7 +151,7 @@ class RSAttack():
         
         elif self.loss == 'prob':
             if self.is_mmseg_model:
-                adv_probs = adv_result.seg_preds.data.to(self.device) # Shape: (C, H, W)
+                adv_probs = softmax(adv_logits, dim=0).to(self.device) # Shape: (C, H, W)
             adv_correct_probs = adv_probs[final_mask]
             loss_val = torch.mean(adv_correct_probs.float())
 
