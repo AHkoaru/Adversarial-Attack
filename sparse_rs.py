@@ -79,7 +79,8 @@ class RSAttack():
             original_img=None,
             d=5,
             use_decision_loss=True,
-            is_mmseg_model=False
+            is_mmseg_model=False,
+            enable_success_reporting=False
             ):
         """
         Sparse-RS implementation in PyTorch
@@ -114,6 +115,7 @@ class RSAttack():
         self.use_decision_loss = use_decision_loss
         self.best_loss = None
         self.is_mmseg_model = is_mmseg_model
+        self.enable_success_reporting = enable_success_reporting
 
         # 이전 상태를 저장하기 위한 변수들 추가
         self.previous_best_img = None
@@ -438,7 +440,10 @@ class RSAttack():
                         print(f'No improvement: returning previous best image')
                     # 개선되지 않았으므로 이전 이미지 반환
                     # print(f'No improvement: returning previous best image')
-                    return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
+                    if self.enable_success_reporting:
+                        return self.current_query, self.previous_best_img, self.previous_best_changed_pixels, False
+                    else:
+                        return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
                 else:
                     # 개선되었으므로 현재 상태를 이전 상태로 저장
                     self.previous_best_img = x_best.clone()
@@ -461,7 +466,10 @@ class RSAttack():
                 n_patches = (n_pixels_to_change // (s * s)) // 100
                 if n_patches == 0:
                     print(f"Warning: eps={self.eps} is too small to create any 2x2 patches. Returning original image.")
-                    return self.current_query, img, torch.zeros_like(img)
+                    if self.enable_success_reporting:
+                        return self.current_query, img, torch.zeros_like(img), False
+                    else:
+                        return self.current_query, img, torch.zeros_like(img)
 
                 # --- 여러 개의 패치와 위치를 초기화 (유지) ---
                 patches_coll = torch.zeros(n_patches, c, s, s, device=self.device)
@@ -589,7 +597,7 @@ class RSAttack():
                     # 개선되지 않았으므로 이전 이미지 반환
                     if self.verbose:
                         print(f'No improvement: returning previous best image')
-                    return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
+                    return self.current_query, self.previous_best_img, self.previous_best_changed_pixels, False
                 else:
                     # 개선되었으므로 현재 상태를 이전 상태로 저장
                     self.previous_best_img = x_best.clone()
@@ -598,7 +606,7 @@ class RSAttack():
                     if self.verbose:
                         print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min:.4f}')
                 
-                return self.current_query, x_best, best_changed_pixels
+                return self.current_query, x_best, best_changed_pixels, True
 
             elif self.norm == 'patches_universal':
                 ''' assumes square images and patches '''
@@ -871,7 +879,10 @@ class RSAttack():
                 if iteration_start_loss != float('inf') and not should_update_iteration:
                     # 개선되지 않았으므로 이전 이미지 반환
                     print(f'No improvement: returning previous best image')
-                    return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
+                    if self.enable_success_reporting:
+                        return self.current_query, self.previous_best_img, self.previous_best_changed_pixels, False
+                    else:
+                        return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
                 else:
                     # 개선되었으므로 현재 상태를 이전 상태로 저장
                     self.previous_best_img = x_best.clone()
@@ -1006,7 +1017,10 @@ class RSAttack():
                 x_best[:, :, ind[:, 0], ind[:, 1]] = 0.
                 x_best[:, :, ind[:, 0], ind[:, 1]] += frame_univ
         
-        return self.current_query, x_best, best_changed_pixels
+        if self.enable_success_reporting:
+            return self.current_query, x_best, best_changed_pixels, True
+        else:
+            return self.current_query, x_best, best_changed_pixels
     
     def perturb(self, img, gt):
         """
@@ -1097,10 +1111,13 @@ class RSAttack():
                     if self.verbose:
                         print(f'Initialized previous state with loss: {initial_loss:.4f}')
         
-        qr_curr, adv_curr, best_changed_pixels = self.attack_single_run(img, gt, self.mask, first_img_pred_labels)
+        qr_curr, adv_curr, best_changed_pixels, is_success = self.attack_single_run(img, gt, self.mask, first_img_pred_labels)
         
         # decision_loss=True이고 best_changed_pixels가 None이 아닌 경우에만 업데이트
         if self.use_decision_loss and best_changed_pixels is not None:
             self.pre_changed_pixels = best_changed_pixels
         
-        return qr_curr, adv_curr
+        if self.enable_success_reporting:
+            return qr_curr, adv_curr, is_success
+        else:
+            return qr_curr, adv_curr
