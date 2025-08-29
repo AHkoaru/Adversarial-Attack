@@ -206,7 +206,7 @@ def main(config):
         # Calculate the number of pixels per patch
         _, _, H, W = img_tensor.shape
         total_target_pixels_overall = H * W * config["attack_pixel"]
-        pixels_per_single_patch_target = total_target_pixels_overall / 250
+        pixels_per_single_patch_target = total_target_pixels_overall / 500
 
         # === 패치 크기 계산 로직 ===
         target_area_int = int(round(pixels_per_single_patch_target))
@@ -224,8 +224,8 @@ def main(config):
             model,
             x_dimensions=(patch_w_pixels, patch_w_pixels), 
             y_dimensions=(patch_h_pixels, patch_h_pixels), 
-            restarts=250,
-            max_iterations=20,
+            restarts=500,
+            max_iterations=10,
             threshold=21000,
             device=device,
             cfg = config,
