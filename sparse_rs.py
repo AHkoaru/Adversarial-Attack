@@ -421,36 +421,36 @@ class RSAttack():
                             be_all[img_idx] = temp_be
 
                 # 현재 iteration의 결과를 이전 상태와 비교
-                if self.use_decision_loss:
-                    # decision_loss 사용 시: best_decision_loss가 음수면 업데이트
-                    if best_decision_loss is not None:
-                        should_update_iteration = best_decision_loss < 0
-                        if self.verbose:
-                            print(f'Decision loss check: {best_decision_loss:.4f} {"< 0 (update)" if should_update_iteration else ">= 0 (no update)"}')
-                    else:
-                        should_update_iteration = True  # 첫 번째 iteration
-                else:
-                    # decision_loss 미사용 시: previous_best_loss보다 작으면 업데이트
-                    should_update_iteration = loss_min < self.previous_best_loss
-                    # if self.verbose:
-                        # print(f'Loss check: {loss_min:.4f} {"< " if should_update_iteration else ">= "}{self.previous_best_loss:.4f}')
+                # if self.use_decision_loss:
+                #     # decision_loss 사용 시: best_decision_loss가 음수면 업데이트
+                #     if best_decision_loss is not None:
+                #         should_update_iteration = best_decision_loss < 0
+                #         if self.verbose:
+                #             print(f'Decision loss check: {best_decision_loss:.4f} {"< 0 (update)" if should_update_iteration else ">= 0 (no update)"}')
+                #     else:
+                #         should_update_iteration = True  # 첫 번째 iteration
+                # else:
+                #     # decision_loss 미사용 시: previous_best_loss보다 작으면 업데이트
+                #     should_update_iteration = loss_min < self.previous_best_loss
+                #     # if self.verbose:
+                #         # print(f'Loss check: {loss_min:.4f} {"< " if should_update_iteration else ">= "}{self.previous_best_loss:.4f}')
                 
-                if iteration_start_loss != float('inf') and not should_update_iteration:
-                    if self.verbose:
-                        print(f'No improvement: returning previous best image')
-                    # 개선되지 않았으므로 이전 이미지 반환
-                    # print(f'No improvement: returning previous best image')
-                    if self.enable_success_reporting:
-                        return self.current_query, self.previous_best_img, self.previous_best_changed_pixels, False
-                    else:
-                        return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
-                else:
-                    # 개선되었으므로 현재 상태를 이전 상태로 저장
-                    self.previous_best_img = x_best.clone()
-                    self.previous_best_loss = loss_min
-                    self.previous_best_changed_pixels = best_changed_pixels
-                    if self.verbose:
-                        print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min.item():.4f}')
+                # if iteration_start_loss != float('inf') and not should_update_iteration:
+                #     if self.verbose:
+                #         print(f'No improvement: returning previous best image')
+                #     # 개선되지 않았으므로 이전 이미지 반환
+                #     # print(f'No improvement: returning previous best image')
+                #     if self.enable_success_reporting:
+                #         return self.current_query, self.previous_best_img, self.previous_best_changed_pixels, False
+                #     else:
+                #         return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
+                # else:
+                #     # 개선되었으므로 현재 상태를 이전 상태로 저장
+                self.previous_best_img = x_best.clone()
+                self.previous_best_loss = loss_min
+                self.previous_best_changed_pixels = best_changed_pixels
+                if self.verbose:
+                    print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min.item():.4f}')
                     # print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min.item():.4f}')
 
             elif self.norm == 'patches':
@@ -1017,10 +1017,7 @@ class RSAttack():
                 x_best[:, :, ind[:, 0], ind[:, 1]] = 0.
                 x_best[:, :, ind[:, 0], ind[:, 1]] += frame_univ
         
-        if self.enable_success_reporting:
             return self.current_query, x_best, best_changed_pixels, True
-        else:
-            return self.current_query, x_best, best_changed_pixels
     
     def perturb(self, img, gt):
         """
