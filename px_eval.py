@@ -206,7 +206,7 @@ def main(config):
         # Calculate the number of pixels per patch
         _, _, H, W = img_tensor.shape
         total_target_pixels_overall = H * W * config["attack_pixel"]
-        pixels_per_single_patch_target = total_target_pixels_overall / 500
+        pixels_per_single_patch_target = total_target_pixels_overall / config["restarts"]
 
         # === 패치 크기 계산 로직 ===
         target_area_int = int(round(pixels_per_single_patch_target))
@@ -224,8 +224,8 @@ def main(config):
             model,
             x_dimensions=(patch_w_pixels, patch_w_pixels), 
             y_dimensions=(patch_h_pixels, patch_h_pixels), 
-            restarts=500,
-            max_iterations=10,
+            restarts=config["restarts"],
+            max_iterations=config["max_iterations"],
             threshold=21000,
             device=device,
             cfg = config,
@@ -425,6 +425,8 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--attack_pixel", type=float, required=True, help="Ratio of adversarial pixels to total image pixels.") # 새 pixel_ratio 인자 추가
     parser.add_argument("--num_images", type=int, default=100, help="Number of images to process.")
+    parser.add_argument("--restarts", type=int, default=250, help="Number of restarts.")
+    parser.add_argument("--max_iterations", type=int, default=20, help="Number of max iterations.")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -434,4 +436,6 @@ if __name__ == "__main__":
     config["attack_pixel"] = args.attack_pixel
     config["num_images"] = args.num_images
     config["base_dir"] = f"./data/{config['attack_method']}/results/{config['dataset']}/{config['model']}"
+    config["restarts"] = args.restarts
+    config["max_iterations"] = args.max_iterations
     main(config)
