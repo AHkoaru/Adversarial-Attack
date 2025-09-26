@@ -90,7 +90,8 @@ def process_single_image(args):
         original_img=img_bgr,
         d=5,
         use_decision_loss=config["use_decision_loss"],
-        is_mmseg_model=True
+        is_mmseg_model=True,
+        enable_success_reporting=False
     )
 
     adv_img_bgr_list = []

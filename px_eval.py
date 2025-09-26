@@ -425,8 +425,8 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--attack_pixel", type=float, required=True, help="Ratio of adversarial pixels to total image pixels.") # 새 pixel_ratio 인자 추가
     parser.add_argument("--num_images", type=int, default=100, help="Number of images to process.")
-    parser.add_argument("--restarts", type=int, default=250, help="Number of restarts.")
-    parser.add_argument("--max_iterations", type=int, default=20, help="Number of max iterations.")
+    parser.add_argument("--restarts", type=int, default=500, help="Number of restarts.")
+    parser.add_argument("--max_iterations", type=int, default=10, help="Number of max iterations.")
     args = parser.parse_args()
 
     config = load_config(args.config)
