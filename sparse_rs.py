@@ -159,22 +159,22 @@ class RSAttack():
 
             return loss_val.detach().cpu().numpy(), None, None
 
-        # # decision_loss=True일 때만 changed pixels 계산
-        # adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
-        # H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
-        # current_changed_pixels = (adv_pred_labels != self.original_pred_labels.to(self.device)).long().to(self.device)
+        # decision_loss=True일 때만 changed pixels 계산
+        adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+        H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
+        current_changed_pixels = (adv_pred_labels != self.original_pred_labels.to(self.device)).long().to(self.device)
         
-        # #calculate changed pixels for decision loss
-        # if self.pre_changed_pixels is not None:
-        #     changed_pixels = current_changed_pixels - self.pre_changed_pixels
-        # else:
-        #     changed_pixels = current_changed_pixels
-        # decision_loss = (torch.sum(changed_pixels.float()) / ((H * W * self.eps) * (self.d ** 2)))
-        # if self.verbose is True:
-        #     print(f'loss_val: {loss_val:.4f}, decision_loss: {-decision_loss:.4f}, total_loss: {(loss_val - decision_loss):.4f}')
+        #calculate changed pixels for decision loss
+        if self.pre_changed_pixels is not None:
+            changed_pixels = current_changed_pixels - self.pre_changed_pixels
+        else:
+            changed_pixels = current_changed_pixels
+        decision_loss = (torch.sum(changed_pixels.float()) / ((H * W * self.eps) * (self.d ** 2)))
+        if self.verbose is True:
+            print(f'loss_val: {loss_val:.4f}, decision_loss: {-decision_loss:.4f}, total_loss: {(loss_val - decision_loss):.4f}')
 
-        # # Return loss as numpy float. Lower value means the attack is more successful.
-        # return (loss_val - decision_loss).detach().cpu().numpy(), current_changed_pixels, (-decision_loss).detach().cpu().numpy()
+        # Return loss as numpy float. Lower value means the attack is more successful.
+        return (loss_val - decision_loss).detach().cpu().numpy(), current_changed_pixels, (-decision_loss).detach().cpu().numpy()
 
     def init_hyperparam(self, x):
         assert self.norm in ['L0', 'patches', 'frames',

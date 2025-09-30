@@ -14,9 +14,15 @@
 
 
 python rs_eval.py \
+    --config configs_attack/cityscapes/config_setr.py \
+    --resume \
+    --resume_timestamp 20250905_034206 
+
+
+
+python rs_eval.py \
     --config configs_attack/voc2012/config_pspnet.py\
-    --iter 5\
-    --num_images 3
+    --num_images 1
 
 
 python rs_eval.py \
@@ -33,8 +39,24 @@ python rs_eval.py \
 python rs_eval.py \
     --config configs_attack/cityscapes/config_setr.py
 
+python graph.py \
+    --config configs_attack/ade20k/config_pspnet.py\
+    --num_images 10
+
 # python rs_eval.py \
 #     --config configs_attack/cityscapes/config_deepdlabv3.py
 
 # python rs_eval.py \
 #     --config configs_attack/cityscapes/config_seg.py
+
+python px_eval.py \
+    --config configs_attack/cityscapes/config_setr.py\
+    --attack_pixel 0.05
+
+python zc_eval.py \
+    --config configs_attack/VOC2012/config_zegclip.py\
+    --num_images 1\
+    --iters 10
+
+CUDA_VISIBLE_DEVICES="0" 
+python test.py configs/voc12/vpt_seg_fully_vit-b_512x512_20k_12_10.py  ckpt/voc_fully_512_vit_base.pth --eval=mIoU
