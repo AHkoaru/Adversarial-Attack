@@ -461,7 +461,7 @@ if __name__ == '__main__':
     parser.add_argument('--use_decision_loss', type=str, default='False', choices=['True', 'False'], help='Whether to use decision loss.')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output.')
     parser.add_argument('--norm', type=str, default='L0', choices=['L0', 'patches'], help='Norm for RSAttack.')
-    parser.add_argument('--loss', type=str, default='prob', choices=['margin', 'prob'], help='Loss function for RSAttack.')
+    parser.add_argument('--loss', type=str, default='prob', choices=['margin', 'prob', 'decision', 'decision_change'], help='Loss function for RSAttack.')
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -476,7 +476,11 @@ if __name__ == '__main__':
     config["iters"] = args.iters
     config["num_processes"] = args.num_processes
     config["base_dir"] = f"./data/{config['attack_method']}/results/{config['dataset']}/{config['model']}"
-    config["use_decision_loss"] = args.use_decision_loss.lower() == 'true'  # 문자열을 boolean으로 변환
+    # decision/decision_change 선택 시 decision loss 자동 활성화
+    if args.loss in ['decision', 'decision_change']:
+        config["use_decision_loss"] = True
+    else:
+        config["use_decision_loss"] = args.use_decision_loss.lower() == 'true'  # 문자열을 boolean으로 변환
     config["verbose"] = args.verbose
     config["norm"] = args.norm
     config["loss"] = args.loss
