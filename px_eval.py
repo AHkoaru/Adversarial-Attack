@@ -172,31 +172,84 @@ def main(config):
     #Record start time
     start_time = datetime.datetime.now()
     start_timestamp = start_time.strftime("%Y%m%d_%H%M%S")
-    print("Start time:", start_timestamp)
 
-    # Setup base directory for this run
-    base_dir = os.path.join(config["base_dir"], start_timestamp)
-    os.makedirs(base_dir, exist_ok=True)
+    # Use resume_dir if provided, otherwise create new directory
+    if config.get("resume_dir"):
+        base_dir = config["resume_dir"]
+        print(f"Resuming from existing directory: {base_dir}")
+        # Extract timestamp from existing directory name
+        start_timestamp = os.path.basename(base_dir)
+    else:
+        print("Start time:", start_timestamp)
+        # Setup base directory for this run
+        base_dir = os.path.join(config["base_dir"], start_timestamp)
+        os.makedirs(base_dir, exist_ok=True)
 
     for i, (img_bgr, filename, gt) in tqdm(enumerate(dataset), desc="Generating adversarial examples"):
         setproctitle.setproctitle(f"({i+1}/{len(dataset.images)})_Pixle_{config['dataset']}_{config['model']}_{config['attack_pixel']}")
-
-        img_tensor = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(device) # Ensure float and on GPU
-        gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(device) # Ensure long and on GPU
-        # print(img_tensor.shape)
-
 
         # --- Separate directory and filename from the original filename ---
         original_basename = os.path.basename(filename) # e.g., "frankfurt_000000_005543_leftImg8bit.png"
         image_name = os.path.splitext(original_basename)[0]  # Remove extension for directory name
         # ----------------------------------------------------------------
 
-        # --- Calculate and save original segmentation ONCE per image ---
-        ori_result = inference_model(model, img_bgr) # Use BGR image
-
         # Create individual directory for this image (rs_eval.py style)
         current_img_save_dir = os.path.join(base_dir, image_name)
+
+        # Check if this image has already been processed
+        completion_marker = os.path.join(current_img_save_dir, "5000query", "adv.png")
+        if os.path.exists(completion_marker):
+            print(f"Skipping already completed image: {image_name}")
+            # Load existing results for evaluation
+            img_list.append(img_bgr)
+            gt_list.append(gt)
+            filename_list.append(filename)
+
+            # Load original image as 0th query result
+            adv_img_lists[0].append(img_bgr)
+            adv_query_lists[0].append(0)
+
+            # Load existing adversarial images and metrics
+            for j in range(5):
+                query_img_save_dir = os.path.join(current_img_save_dir, f"{j+1}000query")
+                adv_img_path = os.path.join(query_img_save_dir, "adv.png")
+
+                # Load adversarial image
+                adv_img_rgb = np.array(Image.open(adv_img_path))
+                adv_img_bgr = adv_img_rgb[:, :, ::-1]
+                adv_img_lists[j+1].append(adv_img_bgr)
+                adv_query_lists[j+1].append((j+1)*1000)  # Assume standard query counts
+
+                # Calculate metrics from existing images
+                img_rgb = img_bgr[:, :, ::-1]
+                ori_result = inference_model(model, img_bgr)
+                ori_pred = ori_result.pred_sem_seg.data.squeeze().cpu().numpy()
+                adv_result = inference_model(model, adv_img_bgr)
+                adv_pred = adv_result.pred_sem_seg.data.squeeze().cpu().numpy()
+
+                l0 = calculate_l0_norm(img_rgb, adv_img_rgb)
+                ratio = calculate_pixel_ratio(img_rgb, adv_img_rgb)
+                impact = calculate_impact(img_rgb, adv_img_rgb, ori_pred, adv_pred)
+
+                all_l0_metrics[j+1].append(l0)
+                all_ratio_metrics[j+1].append(ratio)
+                all_impact_metrics[j+1].append(impact)
+
+            # Add metrics for original image
+            all_l0_metrics[0].append(0)
+            all_ratio_metrics[0].append(0.0)
+            all_impact_metrics[0].append(0.0)
+
+            continue
+
         os.makedirs(current_img_save_dir, exist_ok=True)
+
+        img_tensor = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(device) # Ensure float and on GPU
+        gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(device) # Ensure long and on GPU
+        # print(img_tensor.shape)
+
+        # --- Calculate and save original segmentation ONCE per image ---
+        ori_result = inference_model(model, img_bgr) # Use BGR image
         
         # Save original image
         img = img_bgr[:, :, ::-1]  # Convert BGR to RGB
@@ -427,10 +480,11 @@ if __name__ == "__main__":
     parser.add_argument("--num_images", type=int, default=100, help="Number of images to process.")
     parser.add_argument("--restarts", type=int, default=500, help="Number of restarts.")
     parser.add_argument("--max_iterations", type=int, default=10, help="Number of max iterations.")
+    parser.add_argument("--resume_dir", type=str, default=None, help="Path to existing experiment directory to resume from.")
     args = parser.parse_args()
 
     config = load_config(args.config)
-    
+
     config["attack_method"] = "Pixle"
     config["device"] = args.device
     config["attack_pixel"] = args.attack_pixel
@@ -438,4 +492,5 @@ if __name__ == "__main__":
     config["base_dir"] = f"./data/{config['attack_method']}/results/{config['dataset']}/{config['model']}"
     config["restarts"] = args.restarts
     config["max_iterations"] = args.max_iterations
+    config["resume_dir"] = args.resume_dir
     main(config)
