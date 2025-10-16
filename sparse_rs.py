@@ -121,7 +121,8 @@ class RSAttack():
         self.previous_best_img = None
         self.previous_best_loss = float('inf')
         self.previous_best_changed_pixels = None
-        
+        self.previous_pred_labels = None
+
     def margin_and_loss(self, img, final_mask, first_img_pred_labels):  
         if self.is_mmseg_model:
             # 기존 mmseg API 사용
@@ -137,6 +138,7 @@ class RSAttack():
         gt_indices = final_mask.float().argmax(dim=0)  # (H, W)
         # 2. 정답 로짓
         correct_logits = adv_logits.gather(0, gt_indices.unsqueeze(0)).squeeze(0)  # (H, W)
+        
         if self.loss == 'margin':
             # margin 기반 loss로 변경
             adv_logits_clone = adv_logits.clone()
@@ -159,22 +161,63 @@ class RSAttack():
 
             return loss_val.detach().cpu().numpy(), None, None
 
-        # decision_loss=True일 때만 changed pixels 계산
-        adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
-        H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
-        current_changed_pixels = (adv_pred_labels != self.original_pred_labels.to(self.device)).long().to(self.device)
-        
-        #calculate changed pixels for decision loss
-        if self.pre_changed_pixels is not None:
-            changed_pixels = current_changed_pixels - self.pre_changed_pixels
-        else:
-            changed_pixels = current_changed_pixels
-        decision_loss = (torch.sum(changed_pixels.float()) / ((H * W * self.eps) * (self.d ** 2)))
-        if self.verbose is True:
-            print(f'loss_val: {loss_val:.4f}, decision_loss: {-decision_loss:.4f}, total_loss: {(loss_val - decision_loss):.4f}')
+        elif self.loss == 'decision':
+            # Margin loss 계산
+            adv_logits_clone = adv_logits.clone()
+            h, w = adv_logits.shape[1], adv_logits.shape[2]
+            adv_logits_clone[gt_indices, torch.arange(h).unsqueeze(1).expand(h, w), torch.arange(w).expand(h, w)] = float('-inf')
+            max_wrong_logits, _ = adv_logits_clone.max(dim=0)  # (H, W)
+            margin = correct_logits - max_wrong_logits  # (H, W)
+            valid_pixel_mask = final_mask.any(dim=0)
+            margin_loss = margin[valid_pixel_mask].mean()
 
-        # Return loss as numpy float. Lower value means the attack is more successful.
-        return (loss_val - decision_loss).detach().cpu().numpy(), current_changed_pixels, (-decision_loss).detach().cpu().numpy()
+            # Decision loss 계산
+            adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+            H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
+            current_changed_pixels = (adv_pred_labels != self.original_pred_labels.to(self.device)).long().to(self.device)
+
+            # 증분 changed pixels 계산
+            if self.pre_changed_pixels is not None:
+                changed_pixels = current_changed_pixels - self.pre_changed_pixels
+            else:
+                changed_pixels = current_changed_pixels
+            decision_loss = (torch.sum(changed_pixels.float()) / ((H * W * self.eps) * (self.d ** 2)))
+
+            # Margin loss와 Decision loss 결합
+            total_loss = margin_loss - decision_loss
+
+            if self.verbose:
+                print(f'margin_loss: {margin_loss:.4f}, decision_loss: {-decision_loss:.4f}, total_loss: {total_loss:.4f}')
+
+            # Return loss as numpy float. Lower value means the attack is more successful.
+            return total_loss.detach().cpu().numpy(), current_changed_pixels, (-decision_loss).detach().cpu().numpy()
+
+        elif self.loss == 'decision_change':
+            # 이전 iteration의 예측 대비 현재 예측 변경 픽셀 수 계산
+            adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+
+            # 첫 iteration이면 원본 예측을 이전 예측으로 사용
+            if self.previous_pred_labels is None:
+                self.previous_pred_labels = self.original_pred_labels.clone()
+
+            # 이전 예측 대비 변경된 픽셀 계산
+            changed_pixels = (adv_pred_labels != self.previous_pred_labels).long()
+
+            # 배경 픽셀 제외
+            valid_pixel_mask = final_mask.any(dim=0)
+            changed_count = changed_pixels[valid_pixel_mask].sum().float()
+            total_valid_pixels = valid_pixel_mask.sum().float()
+
+            # 변경 비율 계산 (음수로 반환: 변경이 많을수록 loss 감소)
+            change_ratio = changed_count / (total_valid_pixels + 1e-8)
+            loss_val = -change_ratio  # 음수: 더 많이 변경될수록 loss 낮아짐
+
+            if self.verbose:
+                print(f'Changed pixels: {changed_count.item():.0f}/{total_valid_pixels.item():.0f}, '
+                      f'Change ratio: {change_ratio.item():.4f}, Loss: {loss_val.item():.4f}')
+
+            # Return: loss (음수), changed_pixels mask, change_ratio (양수)
+            return loss_val.detach().cpu().numpy(), changed_pixels, change_ratio.detach().cpu().numpy()
 
     def init_hyperparam(self, x):
         assert self.norm in ['L0', 'patches', 'frames',
@@ -402,56 +445,62 @@ class RSAttack():
                         x_best = x_new.clone()
                         # if self.verbose:
                             # print(f'loss: {loss}, current_query: {self.current_query}')
+
+                        # decision_change loss 사용 시 이전 예측 레이블 업데이트
+                        if self.loss == 'decision_change':
+                            if self.is_mmseg_model:
+                                new_result = inference_model(self.model, x_new.squeeze(0).permute(1, 2, 0).cpu().numpy())
+                                self.previous_pred_labels = new_result.pred_sem_seg.data.squeeze().to(self.device).clone()
+                            else:
+                                x_new_np = x_new.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                                _, new_pred_labels = model_predict(self.model, x_new_np, self.cfg)
+                                self.previous_pred_labels = new_pred_labels.clone()
+
                         # 픽셀 인덱스 관리 배열 업데이트 (핵심 부분!)
                         # 스왑된 픽셀들의 인덱스를 업데이트
                         for img_idx in range(x_new.shape[0]):
                             # 복원된 픽셀들 (수정됨 → 수정안됨)
                             restored_pixels = b_all[img_idx, ind_p]
-                            # 새로 수정된 픽셀들 (수정안됨 → 수정됨) 
+                            # 새로 수정된 픽셀들 (수정안됨 → 수정됨)
                             new_modified_pixels = be_all[img_idx, ind_np]
-                            
+
                             # 인덱스 스왑
                             temp_b = b_all[img_idx].clone()
                             temp_be = be_all[img_idx].clone()
-                            
+
                             temp_b[ind_p] = new_modified_pixels
                             temp_be[ind_np] = restored_pixels
-                            
+
                             b_all[img_idx] = temp_b
                             be_all[img_idx] = temp_be
 
                 # 현재 iteration의 결과를 이전 상태와 비교
-                # if self.use_decision_loss:
-                #     # decision_loss 사용 시: best_decision_loss가 음수면 업데이트
-                #     if best_decision_loss is not None:
-                #         should_update_iteration = best_decision_loss < 0
-                #         if self.verbose:
-                #             print(f'Decision loss check: {best_decision_loss:.4f} {"< 0 (update)" if should_update_iteration else ">= 0 (no update)"}')
-                #     else:
-                #         should_update_iteration = True  # 첫 번째 iteration
-                # else:
-                #     # decision_loss 미사용 시: previous_best_loss보다 작으면 업데이트
-                #     should_update_iteration = loss_min < self.previous_best_loss
-                #     # if self.verbose:
-                #         # print(f'Loss check: {loss_min:.4f} {"< " if should_update_iteration else ">= "}{self.previous_best_loss:.4f}')
-                
-                # if iteration_start_loss != float('inf') and not should_update_iteration:
-                #     if self.verbose:
-                #         print(f'No improvement: returning previous best image')
-                #     # 개선되지 않았으므로 이전 이미지 반환
-                #     # print(f'No improvement: returning previous best image')
-                #     if self.enable_success_reporting:
-                #         return self.current_query, self.previous_best_img, self.previous_best_changed_pixels, False
-                #     else:
-                #         return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
-                # else:
-                #     # 개선되었으므로 현재 상태를 이전 상태로 저장
+                if best_decision_loss is None:
+                    should_update_iteration = True  # 첫 번째 iteration
+                elif self.loss == 'margin':
+                    should_update_iteration = best_decision_loss < 0
+                elif self.loss == 'decision_change':
+                    should_update_iteration = best_decision_loss > 0
+                else:
+                    should_update_iteration = loss_min < self.previous_best_loss
+
+                # 개선되지 않았으면 이전 이미지 반환
+                if iteration_start_loss != float('inf') and not should_update_iteration:
+                    if self.verbose:
+                        print(f'No improvement: returning previous best image')
+
+                    if self.enable_success_reporting:
+                        return self.current_query, self.previous_best_img, self.previous_best_changed_pixels, False
+                    else:
+                        return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
+
+                # 개선되었으므로 현재 상태를 이전 상태로 저장
                 self.previous_best_img = x_best.clone()
                 self.previous_best_loss = loss_min
                 self.previous_best_changed_pixels = best_changed_pixels
+
                 if self.verbose:
                     print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min.item():.4f}')
-                    # print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min.item():.4f}')
 
             
         
@@ -504,7 +553,11 @@ class RSAttack():
                     original_img_pred_labels = first_img_pred_labels
                 
                 self.original_pred_labels = original_img_pred_labels.clone()
-                
+
+                # decision_change loss 사용 시 초기 예측 레이블 저장
+                if self.loss == 'decision_change':
+                    self.previous_pred_labels = original_img_pred_labels.clone()
+
                 # 2. Create masks
                 ignore_index = 255
                 num_classes = first_img_probs.shape[0]
@@ -546,7 +599,12 @@ class RSAttack():
                     if self.verbose:
                         print(f'Initialized previous state with loss: {initial_loss:.4f}')
         
-        qr_curr, adv_curr, best_changed_pixels, is_success = self.attack_single_run(img, gt, self.mask, first_img_pred_labels)
+        ret = self.attack_single_run(img, gt, self.mask, first_img_pred_labels)
+        if len(ret) == 4:
+            qr_curr, adv_curr, best_changed_pixels, is_success = ret
+        else:
+            qr_curr, adv_curr, best_changed_pixels = ret
+            is_success = True
         
         # decision_loss=True이고 best_changed_pixels가 None이 아닌 경우에만 업데이트
         if self.use_decision_loss and best_changed_pixels is not None:
