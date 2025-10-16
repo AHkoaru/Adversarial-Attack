@@ -5,8 +5,10 @@ import torch
 from torch.nn.functional import softmax
 
 from mmseg.apis import inference_model
+from adv_setting import model_predict  # model_predict import 추가
 
 from tqdm import tqdm
+from function import visualize_segmentation
 
 from function import *
 from evaluation import *
@@ -45,8 +47,8 @@ class Pixle():
         x_dimensions=(6, 6),
         y_dimensions=(5, 5),
         pixel_mapping="random",
-        restarts=500,
-        max_iterations=10,
+        restarts=250,
+        max_iterations=20,
         update_each_iteration=False,
         threshold=2250,
         device=None,
@@ -54,7 +56,8 @@ class Pixle():
         is_mmseg_model=False,
         loss='prob',
         eps=0.01,
-        d=5
+        d=5,
+        model_config=None  # model_config 파라미터 추가
     ):
         self.model = model
         self.device = device
@@ -123,6 +126,8 @@ class Pixle():
         self.p1_y_dimensions = y_dimensions
 
         self.supported_mode = ["default", "targeted"]
+        self.is_mmseg_model = is_mmseg_model
+        self.model_config = model_config  # model_config 저장
 
 
     def forward(self, images, gt):
@@ -323,10 +328,19 @@ class Pixle():
         return adv_images
     #안쓰는 함수
     def _get_prob(self, image, gt):
-        result = inference_model(self.model, image)
-        # Get prediction logits
-        pred_labels = result.pred_sem_seg.data.squeeze().cpu().numpy().astype(np.uint8) #result shape (1024, 2048)
-
+        if self.is_mmseg_model:
+            # 기존 mmseg API 사용
+            result = inference_model(self.model, image)
+            pred_labels = result.pred_sem_seg.data.squeeze().cpu().numpy().astype(np.uint8) #result shape (1024, 2048)
+        else:
+            # model_predict 사용
+            if isinstance(image, torch.Tensor):
+                image_np = image.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+            else:
+                image_np = image
+            _, pred_labels = model_predict(self.model, image_np, self.model_config)
+            pred_labels = pred_labels.cpu().numpy().astype(np.uint8)
+        
         # 비교를 위해 gt_labels를 pred_labels와 동일한 장치 및 dtype으로 이동합니다.
         gt_labels = gt.to(device=pred_labels.device, dtype=pred_labels.dtype)
 
@@ -469,19 +483,22 @@ class Pixle():
             # 1. Get original logits and predictions
             try:
                 if self.is_mmseg_model:
-                    # Use mmseg API for mmseg models
-                    original_result = inference_model(self.model, original_img.permute(1, 2, 0).cpu().numpy()) # Pass Tensor
+                    # 기존 mmseg API 사용
+                    original_result = inference_model(self.model, original_img.permute(1, 2, 0).cpu().numpy())
                     original_logits = original_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
                     original_probs = softmax(original_logits, dim=0) # Shape: (C, H, W)
                     original_pred_labels = original_result.pred_sem_seg.data.squeeze() # Shape: (H, W)
                 else:
-                    # Use model_predict for Robust models
-                    from adv_setting import model_predict
-                    img_np = original_img.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-                    original_probs, original_pred_labels = model_predict(self.model, img_np, self.cfg)
-                    original_logits = torch.log(original_probs)
+                    # model_predict 사용 (DataParallel 문제 없음)
+                    original_img_np = original_img.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                    original_probs, original_pred_labels = model_predict(self.model, original_img_np, self.model_config)
+                    original_probs = original_probs.to(self.device)
+                    original_pred_labels = original_pred_labels.to(self.device)
+                    # logits는 probs에서 역계산 (필요한 경우)
+                    original_logits = torch.log(original_probs + 1e-8)
+                    
             except Exception as e:
-                print("\n--- Error calling inference (Original Image) ---")
+                print("\n--- Error calling inference_model (Original Image) ---")
                 raise e
 
             # 2. Create masks
@@ -492,18 +509,16 @@ class Pixle():
             # 예측이 맞은 픽셀만 선택
             condition_mask = torch.ones_like(original_pred_labels, dtype=torch.bool)
 
-            #gt를 사용해 ignore 픽셀 제거
+            #gt를 사용해 배경 제거
             if self.cfg['dataset'] == 'cityscapes':
                 # Cityscapes: gt에서 255인 픽셀 무시
                 valid_gt_mask = gt != 255
             elif self.cfg['dataset'] == 'ade20k':
-                # ADE20k: gt에서 0번 클래스인 픽셀 무시 (ADE20K에서 0이 ignore_index)
+                # ADE20k: gt에서 0번 클래스인 픽셀 무시
                 valid_gt_mask = gt != 0
             elif self.cfg['dataset'] == 'VOC2012':
-                # VOC2012: gt에서 255인 픽셀 무시
-                valid_gt_mask = gt != 255
-            else:
-                raise ValueError(f"Unsupported dataset: {self.cfg['dataset']}")
+                # VOC2012: gt에서 0번 클래스인 픽셀 무시
+                valid_gt_mask = gt != 0
 
             correct_masked_pred_labels = torch.where(valid_gt_mask, original_pred_labels, ignore_index)
 
@@ -545,16 +560,18 @@ class Pixle():
                  pert_image_tensor = pert_image_tensor.to(self.device)
 
             # 2. Get probabilities for the perturbed image
+
             if self.is_mmseg_model:
-                adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
+                # 기존 mmseg API 사용
+                adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy())
                 adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
                 adv_probs = softmax(adv_logits, dim=0) # Shape: (C, H, W)
             else:
-                # Use model_predict for Robust models
+                # model_predict 사용 (DataParallel 문제 없음)
                 from adv_setting import model_predict
-                img_np = pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-                adv_probs, _ = model_predict(self.model, img_np, self.cfg)
-                adv_logits = torch.log(adv_probs)
+                pert_img_np = pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                adv_probs, _ = model_predict(self.model, pert_img_np, self.model_config)
+                adv_probs = adv_probs.to(self.device)
 
             # Calculate loss based on loss type
             if self.loss == 'prob':
@@ -719,15 +736,21 @@ if __name__ == "__main__":
         img_tensor = torch.from_numpy(img.copy()).unsqueeze(0).permute(0, 3, 1, 2) # Shape: (1, C, H, W)
         gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0) # Shape: (1, H, W)
 
-        pixle = Pixle(model,
-                      x_dimensions=(0.006, 0.006),
-                      y_dimensions=(0.006, 0.006),
-                      pixel_mapping="random",
-                      restarts=5,
-                      max_iterations=1,
-                      update_each_iteration=False,
-                      threshold=21000,
-                      cfg = config)
+        # Create pixle object
+        pixle = Pixle(
+            model=model,
+            x_dimensions=(h_found, w_found),
+            y_dimensions=(h_found, w_found),
+            pixel_mapping="random",
+            restarts=250,
+            max_iterations=config["iters"],
+            update_each_iteration=False,
+            threshold=config["attack_pixel"],
+            device=config["device"],
+            cfg=config,
+            is_mmseg_model=False,  # DataParallel 문제 해결을 위해 False로 설정
+            model_config=model_config  # model_config 전달
+        )
 
         results = pixle.forward(img_tensor, gt_tensor)
         results_adv_images = [x.squeeze(0).permute(1, 2, 0).cpu().numpy() for x in results['adv_images']]

@@ -12,7 +12,11 @@
 #configs_attack/cityscapes/config_setr.py
 # export CUDA_VISIBLE_DEVICES=0
 
+# python px_eval.py \
+#     --config configs_attack/ade20k/config_pspnet.py\
+#     --attack_pixel 0.05
 
+<<<<<<< HEAD
 python rs_eval.py \
     --config configs_attack/cityscapes/config_setr.py \
     --resume \
@@ -23,21 +27,53 @@ python rs_eval.py \
 python rs_eval.py \
     --config configs_attack/voc2012/config_pspnet.py\
     --num_images 1
+=======
+# python px_eval.py \
+#     --config configs_attack/ade20k/config_deeplabv3.py\
+#     --attack_pixel 0.05
+
+# python rs_eval.py \
+#     --config configs_attack/cityscapes/config_pspnet.py
+>>>>>>> 124bc0d0439397f1f25a1bc2bcfcd900fad7ae9a
 
 
-python rs_eval.py \
-    --config configs_attack/voc2012/config_seg.py\
-    --norm patches\
-    --eps 0.05\
+# python rs_eval.py \
+#     --config configs_attack/cityscapes/config_deeplabv3.py
 
 
-python rs_eval.py \
-    --config configs_attack/ade20k/config_pspnet.py\
-    --norm patches\
-    --eps 0.04
+# python px_eval.py \
+#     --config configs_attack/VOC2012/config_deeplabv3.py\
+#     --attack_pixel 0.05
 
-python rs_eval.py \
-    --config configs_attack/cityscapes/config_setr.py
+
+# python rs_eval.py \
+#     --config configs_attack/ade20k/config_pspnet.py\
+#     --norm patches\
+#     --eps 0.04
+
+# python rs_eval.py \
+#     --config configs_attack/ade20k/config_pspnet.py
+
+# python rs_eval.py \
+#     --config configs_attack/cityscapes/config_deeplabv3.py
+
+python px_eval.py \
+    --config configs_attack/cityscapes/config_deeplabv3.py\
+    --attack_pixel 0.05
+
+python px_eval.py \
+    --config configs_attack/cityscapes/config_pspnet.py\
+    --attack_pixel 0.05
+
+python px_eval.py \
+    --config configs_attack/cityscapes/config_seg.py\
+    --attack_pixel 0.05
+
+# python px_eval.py \
+#     --config configs_attack/cityscapes/config_seg.py\
+#     --attack_pixel 0.05
+
+
 
 python graph.py \
     --config configs_attack/ade20k/config_pspnet.py\

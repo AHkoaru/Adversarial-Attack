@@ -85,11 +85,13 @@ def process_single_image_robust(args):
         model,
         x_dimensions=(patch_w_pixels, patch_w_pixels), 
         y_dimensions=(patch_h_pixels, patch_h_pixels), 
-        restarts=250,
+        restarts=500,
         max_iterations=20,
         threshold=21000,
         device=config["device"],
-        cfg=config
+        cfg=config,
+        is_mmseg_model=False,
+        model_config=model_config
     )
 
     # Ensure input tensor is on the correct device and potentially float
