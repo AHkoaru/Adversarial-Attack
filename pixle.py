@@ -51,14 +51,27 @@ class Pixle():
         threshold=2250,
         device=None,
         cfg = None,
-        is_mmseg_model=False
+        is_mmseg_model=False,
+        loss='prob',
+        eps=0.01,
+        d=5
     ):
         self.model = model
         self.device = device
         self.cfg = cfg
-        
+
         # Check if this is a robust model or mmseg model
         self.is_mmseg_model = is_mmseg_model
+
+        # Loss function and related parameters
+        self.loss = loss
+        self.eps = eps
+        self.d = d
+
+        # For decision losses
+        self.original_pred_labels = None
+        self.pre_changed_pixels = None
+        self.previous_pred_labels = None
 
         if restarts < 0 or not isinstance(restarts, int):
             raise ValueError(
@@ -499,6 +512,17 @@ class Pixle():
             channel_indices_reshaped = channel_indices_reshaped.to(correct_masked_pred_labels.device)
             final_mask = channel_indices_reshaped == correct_masked_pred_labels #broadcast
 
+            # Store original pred labels for decision losses
+            self.original_pred_labels = original_pred_labels.clone()
+
+            # Initialize previous_pred_labels for decision_change loss
+            if self.loss == 'decision_change':
+                self.previous_pred_labels = original_pred_labels.clone()
+
+            # Initialize pre_changed_pixels for decision loss
+            if self.loss == 'decision':
+                self.pre_changed_pixels = torch.zeros_like(original_pred_labels).to(self.device)
+
             # 3. Calculate initial loss based on probability of TRUE class at matched locations
             # original_probs (C, H, W) 에서 final_mask (C, H, W)가 True인 위치의 값만 선택
             selected_initial_probs = original_probs[final_mask] # 1D Tensor of selected logits
@@ -530,13 +554,74 @@ class Pixle():
                 from adv_setting import model_predict
                 img_np = pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
                 adv_probs, _ = model_predict(self.model, img_np, self.cfg)
-            
-            adv_correct_probs = adv_probs[final_mask]
-            # Average these probabilities
-            loss_val = torch.mean(adv_correct_probs.float())
+                adv_logits = torch.log(adv_probs)
 
-            # Return loss as numpy float. Lower value means the attack is more successful.
-            return loss_val.detach().cpu().numpy()
+            # Calculate loss based on loss type
+            if self.loss == 'prob':
+                # Original probability-based loss
+                adv_correct_probs = adv_probs[final_mask]
+                loss_val = torch.mean(adv_correct_probs.float())
+                return loss_val.detach().cpu().numpy()
+
+            elif self.loss == 'decision':
+                # Margin loss calculation
+                gt_indices = final_mask.float().argmax(dim=0)  # (H, W)
+                correct_logits = adv_logits.gather(0, gt_indices.unsqueeze(0)).squeeze(0)  # (H, W)
+
+                adv_logits_clone = adv_logits.clone()
+                h, w = adv_logits.shape[1], adv_logits.shape[2]
+                adv_logits_clone[gt_indices, torch.arange(h).unsqueeze(1).expand(h, w), torch.arange(w).expand(h, w)] = float('-inf')
+                max_wrong_logits, _ = adv_logits_clone.max(dim=0)  # (H, W)
+                margin = correct_logits - max_wrong_logits  # (H, W)
+                valid_pixel_mask = final_mask.any(dim=0)
+                margin_loss = margin[valid_pixel_mask].mean()
+
+                # Decision loss calculation
+                adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+                H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
+                current_changed_pixels = (adv_pred_labels != self.original_pred_labels).long()
+
+                # Calculate incremental changed pixels
+                if self.pre_changed_pixels is not None:
+                    changed_pixels = current_changed_pixels - self.pre_changed_pixels
+                else:
+                    changed_pixels = current_changed_pixels
+                decision_loss = (torch.sum(changed_pixels.float()) / ((H * W * self.eps) * (self.d ** 2)))
+
+                # Update pre_changed_pixels
+                self.pre_changed_pixels = current_changed_pixels
+
+                # Combine margin loss and decision loss
+                total_loss = margin_loss - decision_loss
+                return total_loss.detach().cpu().numpy()
+
+            elif self.loss == 'decision_change':
+                # Decision change loss calculation
+                adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+
+                # First iteration: use original prediction as previous
+                if self.previous_pred_labels is None:
+                    self.previous_pred_labels = self.original_pred_labels.clone()
+
+                # Calculate changed pixels compared to previous prediction
+                changed_pixels = (adv_pred_labels != self.previous_pred_labels).long()
+
+                # Exclude background pixels
+                valid_pixel_mask = final_mask.any(dim=0)
+                changed_count = changed_pixels[valid_pixel_mask].sum().float()
+                total_valid_pixels = valid_pixel_mask.sum().float()
+
+                # Calculate change ratio (negative: more changes = lower loss)
+                change_ratio = changed_count / (total_valid_pixels + 1e-8)
+                loss_val = -change_ratio  # Negative: more changes = lower loss
+
+                # Update previous_pred_labels for next iteration
+                self.previous_pred_labels = adv_pred_labels.clone()
+
+                return loss_val.detach().cpu().numpy()
+
+            else:
+                raise ValueError(f"Unsupported loss type: {self.loss}")
         
 
         @torch.no_grad()
