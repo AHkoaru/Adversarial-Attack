@@ -123,3 +123,4 @@ plots/
 *.sh
 *.pdf
 ckpt/
+datasets/ADEChallengeData2016
