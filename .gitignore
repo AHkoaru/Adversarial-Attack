@@ -122,5 +122,8 @@ mmseg/.mim
 plots/
 *.sh
 *.pdf
-ckpt/
+*.ckpt/
+ckpt/*  
 datasets/ADEChallengeData2016
+*.output/
+visualization/

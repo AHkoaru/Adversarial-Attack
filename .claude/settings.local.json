@@ -4,7 +4,8 @@
       "Bash(python:*)",
       "Bash(find:*)",
       "Bash(xargs cat:*)",
-      "Bash(sort:*)"
+      "Bash(sort:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []

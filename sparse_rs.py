@@ -109,6 +109,7 @@ class RSAttack():
         self.pre_changed_pixels = None
         self.original_img = original_img
         self.original_pred_labels = None
+        self.success_mask = None  # 공격 성공한 픽셀을 추적하는 마스크
         self.d = d
         self.current_query = 0
         self.verbose = verbose
@@ -117,10 +118,7 @@ class RSAttack():
         self.is_mmseg_model = is_mmseg_model
         self.enable_success_reporting = enable_success_reporting
 
-        # 이전 상태를 저장하기 위한 변수들 추가
-        self.previous_best_img = None
-        self.previous_best_loss = float('inf')
-        self.previous_best_changed_pixels = None
+        # 이전 예측 레이블 저장
         self.previous_pred_labels = None
 
     def margin_and_loss(self, img, final_mask, first_img_pred_labels):  
@@ -162,15 +160,6 @@ class RSAttack():
             return loss_val.detach().cpu().numpy(), None, None
 
         elif self.loss == 'decision':
-            # Margin loss 계산
-            adv_logits_clone = adv_logits.clone()
-            h, w = adv_logits.shape[1], adv_logits.shape[2]
-            adv_logits_clone[gt_indices, torch.arange(h).unsqueeze(1).expand(h, w), torch.arange(w).expand(h, w)] = float('-inf')
-            max_wrong_logits, _ = adv_logits_clone.max(dim=0)  # (H, W)
-            margin = correct_logits - max_wrong_logits  # (H, W)
-            valid_pixel_mask = final_mask.any(dim=0)
-            margin_loss = margin[valid_pixel_mask].mean()
-
             # Decision loss 계산
             adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
             H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
@@ -183,11 +172,11 @@ class RSAttack():
                 changed_pixels = current_changed_pixels
             decision_loss = (torch.sum(changed_pixels.float()) / ((H * W * self.eps) * (self.d ** 2)))
 
-            # Margin loss와 Decision loss 결합
-            total_loss = margin_loss - decision_loss
+            # Decision loss만 사용
+            total_loss = -decision_loss
 
             if self.verbose:
-                print(f'margin_loss: {margin_loss:.4f}, decision_loss: {-decision_loss:.4f}, total_loss: {total_loss:.4f}')
+                print(f'decision_loss: {-decision_loss:.4f}, total_loss: {total_loss:.4f}')
 
             # Return loss as numpy float. Lower value means the attack is more successful.
             return total_loss.detach().cpu().numpy(), current_changed_pixels, (-decision_loss).detach().cpu().numpy()
@@ -195,26 +184,41 @@ class RSAttack():
         elif self.loss == 'decision_change':
             # 이전 iteration의 예측 대비 현재 예측 변경 픽셀 수 계산
             adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
-
+            H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
             # 첫 iteration이면 원본 예측을 이전 예측으로 사용
             if self.previous_pred_labels is None:
                 self.previous_pred_labels = self.original_pred_labels.clone()
+            
+            # 성공 마스크 초기화 (첫 iteration)
+            if self.success_mask is None:
+                self.success_mask = torch.zeros_like(self.original_pred_labels)
 
+            # 공격 성공 마스크: 원본과 다른 예측 (성공적으로 변경된 픽셀)
+            current_success_mask = (adv_pred_labels != self.original_pred_labels).long()
+            
             # 이전 예측 대비 변경된 픽셀 계산
             changed_pixels = (adv_pred_labels != self.previous_pred_labels).long()
-
+            
+            # 새로운 성공 픽셀: 이번 iteration에 새로 성공한 픽셀
+            new_success_pixels = current_success_mask * changed_pixels
+            
             # 배경 픽셀 제외
             valid_pixel_mask = final_mask.any(dim=0)
-            changed_count = changed_pixels[valid_pixel_mask].sum().float()
-            total_valid_pixels = valid_pixel_mask.sum().float()
+            
+            # 현재 성공하지 못한 픽셀만 대상으로 계산
+            available_pixels = valid_pixel_mask & (current_success_mask == 0)
+            new_success_count = new_success_pixels[available_pixels].sum().float()
+            total_available_pixels = available_pixels.sum().float()
 
             # 변경 비율 계산 (음수로 반환: 변경이 많을수록 loss 감소)
-            change_ratio = changed_count / (total_valid_pixels + 1e-8)
-            loss_val = -change_ratio  # 음수: 더 많이 변경될수록 loss 낮아짐
+            change_ratio = new_success_count / (total_available_pixels + 1e-8)
+            
+            loss_val = -change_ratio  / ((H * W * self.eps) * (self.d ** 2)) 
 
             if self.verbose:
-                print(f'Changed pixels: {changed_count.item():.0f}/{total_valid_pixels.item():.0f}, '
+                print(f'New success pixels: {new_success_count.item():.0f}/{total_available_pixels.item():.0f}, '
                       f'Change ratio: {change_ratio.item():.4f}, Loss: {loss_val.item():.4f}')
+                print(f'Total success pixels so far: {current_success_mask.sum().item():.0f}')
 
             # Return: loss (음수), changed_pixels mask, change_ratio (양수)
             return loss_val.detach().cpu().numpy(), changed_pixels, change_ratio.detach().cpu().numpy()
@@ -377,13 +381,6 @@ class RSAttack():
 
     def attack_single_run(self, img, gt, final_mask, first_img_pred_labels):
         with torch.no_grad():
-            # 현재 iteration 시작 전에 이전 상태 저장
-            iteration_start_loss = float('inf')
-            if self.previous_best_img is not None:
-                iteration_start_loss = self.previous_best_loss
-                # if self.verbose:
-                #     print(f'Starting iteration with previous best loss: {iteration_start_loss}')
-            
             adv = img.clone()
             c, h, w = img.shape[1:]
             n_features = c * h * w
@@ -450,11 +447,19 @@ class RSAttack():
                         if self.loss == 'decision_change':
                             if self.is_mmseg_model:
                                 new_result = inference_model(self.model, x_new.squeeze(0).permute(1, 2, 0).cpu().numpy())
-                                self.previous_pred_labels = new_result.pred_sem_seg.data.squeeze().to(self.device).clone()
+                                new_pred_labels = new_result.pred_sem_seg.data.squeeze().to(self.device)
+                                self.previous_pred_labels = new_pred_labels.clone()
                             else:
                                 x_new_np = x_new.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
                                 _, new_pred_labels = model_predict(self.model, x_new_np, self.cfg)
                                 self.previous_pred_labels = new_pred_labels.clone()
+                            
+                            # 성공 마스크 업데이트: 현재 상태 기준으로 재계산
+                            current_success_mask = (new_pred_labels != self.original_pred_labels).long()
+                            self.success_mask = current_success_mask
+                            
+                            if self.verbose:
+                                print(f'Success mask updated. Total successful pixels: {self.success_mask.sum().item():.0f}')
 
                         # 픽셀 인덱스 관리 배열 업데이트 (핵심 부분!)
                         # 스왑된 픽셀들의 인덱스를 업데이트
@@ -474,33 +479,6 @@ class RSAttack():
                             b_all[img_idx] = temp_b
                             be_all[img_idx] = temp_be
 
-                # 현재 iteration의 결과를 이전 상태와 비교
-                if best_decision_loss is None:
-                    should_update_iteration = True  # 첫 번째 iteration
-                elif self.loss == 'margin':
-                    should_update_iteration = best_decision_loss < 0
-                elif self.loss == 'decision_change':
-                    should_update_iteration = best_decision_loss > 0
-                else:
-                    should_update_iteration = loss_min < self.previous_best_loss
-
-                # 개선되지 않았으면 이전 이미지 반환
-                if iteration_start_loss != float('inf') and not should_update_iteration:
-                    if self.verbose:
-                        print(f'No improvement: returning previous best image')
-
-                    if self.enable_success_reporting:
-                        return self.current_query, self.previous_best_img, self.previous_best_changed_pixels, False
-                    else:
-                        return self.current_query, self.previous_best_img, self.previous_best_changed_pixels
-
-                # 개선되었으므로 현재 상태를 이전 상태로 저장
-                self.previous_best_img = x_best.clone()
-                self.previous_best_loss = loss_min
-                self.previous_best_changed_pixels = best_changed_pixels
-
-                if self.verbose:
-                    print(f'Updated: previous loss {iteration_start_loss:.4f} -> current loss {loss_min.item():.4f}')
 
             
         
@@ -557,6 +535,8 @@ class RSAttack():
                 # decision_change loss 사용 시 초기 예측 레이블 저장
                 if self.loss == 'decision_change':
                     self.previous_pred_labels = original_img_pred_labels.clone()
+                    # 성공 마스크 초기화
+                    self.success_mask = torch.zeros_like(original_img_pred_labels)
 
                 # 2. Create masks
                 ignore_index = 255
@@ -588,16 +568,6 @@ class RSAttack():
                     self.pre_changed_pixels = torch.zeros(first_img_pred_labels.shape[0], first_img_pred_labels.shape[1]).to(self.device)
                 else:
                     self.pre_changed_pixels = None
-                
-                # 첫 번째 iteration에서 이전 상태 초기화
-                if self.previous_best_img is None:
-                    self.previous_best_img = img.clone()
-                    # 초기 loss 계산
-                    initial_loss, initial_changed_pixels, _ = self.margin_and_loss(img, self.mask, first_img_pred_labels)
-                    self.previous_best_loss = initial_loss
-                    self.previous_best_changed_pixels = initial_changed_pixels
-                    if self.verbose:
-                        print(f'Initialized previous state with loss: {initial_loss:.4f}')
         
         ret = self.attack_single_run(img, gt, self.mask, first_img_pred_labels)
         if len(ret) == 4:
