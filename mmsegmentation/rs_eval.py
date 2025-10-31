@@ -216,10 +216,9 @@ def get_completed_images(resume_dir):
     return completed
 
 
-def load_completed_results(resume_dir, config):
-    """resume_dir에서 완료된 이미지의 결과를 로드"""
+def load_completed_results(resume_dir, config, model):
+    """resume_dir에서 완료된 이미지의 결과를 로드하고 메트릭을 계산"""
     img_list = []
-    gt_list = []
     filename_list = []
     adv_img_lists = [[] for _ in range(6)]
     all_l0_metrics = [[] for _ in range(6)]
@@ -227,7 +226,7 @@ def load_completed_results(resume_dir, config):
     all_impact_metrics = [[] for _ in range(6)]
 
     if not os.path.exists(resume_dir):
-        return img_list, gt_list, filename_list, adv_img_lists, all_l0_metrics, all_ratio_metrics, all_impact_metrics
+        return img_list, filename_list, adv_img_lists, all_l0_metrics, all_ratio_metrics, all_impact_metrics
 
     # 완료된 이미지 디렉토리 탐색
     for item in sorted(os.listdir(resume_dir)):
@@ -236,34 +235,50 @@ def load_completed_results(resume_dir, config):
             continue
 
         original_path = os.path.join(item_path, "original.png")
-        gt_path = os.path.join(item_path, "gt.png")
 
         if not os.path.exists(original_path):
             continue
 
-        # Original 이미지 로드
-        img = np.array(Image.open(original_path).convert('RGB'))
-        img_list.append(img)
+        # Original 이미지 로드 (BGR로 변환)
+        img_rgb = np.array(Image.open(original_path).convert('RGB'))
+        img_bgr = img_rgb[:, :, ::-1]  # RGB to BGR
+        img_list.append(img_bgr)
         filename_list.append(item)
 
-        # GT 이미지 로드
-        if os.path.exists(gt_path):
-            gt = np.array(Image.open(gt_path))
-            gt_list.append(gt)
+        # Original prediction 계산 (메트릭 계산용)
+        ori_result = inference_model(model, img_bgr.copy())
+        ori_pred = ori_result.pred_sem_seg.data.squeeze().cpu().numpy()
 
-        # 6개의 adversarial 이미지 로드 (각 query 디렉토리에서)
+        # 6개의 adversarial 이미지 로드 및 메트릭 계산
         for i in range(6):
             if i == 0:
                 # i=0은 original 이미지 사용
-                adv_img_lists[i].append(img)
+                adv_img_lists[i].append(img_bgr)
+                all_l0_metrics[i].append(0)
+                all_ratio_metrics[i].append(0.0)
+                all_impact_metrics[i].append(0.0)
             else:
                 # i=1~5는 각 query 디렉토리에서 로드
                 adv_path = os.path.join(item_path, f"{i}000query", "adv.png")
                 if os.path.exists(adv_path):
-                    adv_img = np.array(Image.open(adv_path).convert('RGB'))
-                    adv_img_lists[i].append(adv_img)
+                    adv_img_rgb = np.array(Image.open(adv_path).convert('RGB'))
+                    adv_img_bgr = adv_img_rgb[:, :, ::-1]  # RGB to BGR
+                    adv_img_lists[i].append(adv_img_bgr)
 
-    return img_list, gt_list, filename_list, adv_img_lists, all_l0_metrics, all_ratio_metrics, all_impact_metrics
+                    # 메트릭 계산
+                    adv_result = inference_model(model, adv_img_bgr.copy())
+                    adv_pred = adv_result.pred_sem_seg.data.squeeze().cpu().numpy()
+
+                    l0_norm = calculate_l0_norm(img_bgr, adv_img_bgr)
+                    pixel_ratio = calculate_pixel_ratio(img_bgr, adv_img_bgr)
+                    impact = calculate_impact(img_bgr, adv_img_bgr, ori_pred, adv_pred)
+
+                    all_l0_metrics[i].append(l0_norm)
+                    all_ratio_metrics[i].append(pixel_ratio)
+                    all_impact_metrics[i].append(impact)
+
+    print(f"Loaded and calculated metrics for {len(img_list)} completed images")
+    return img_list, filename_list, adv_img_lists, all_l0_metrics, all_ratio_metrics, all_impact_metrics
 
 
 def main(config):
@@ -399,7 +414,10 @@ def main(config):
             print(f"Resuming with {len(dataset.images)} remaining images\n")
         else:
             print("All images already completed!")
-            return
+            # 빈 리스트로 설정하여 새로운 이미지 처리를 건너뛰고 결과만 계산
+            dataset.images = []
+            dataset.filenames = []
+            dataset.gt_images = []
     else:
         # 새로운 실험: 새 디렉토리 생성
         current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -413,41 +431,7 @@ def main(config):
         process_args.append((img_bgr, filename, gt, model_cfg, config, base_dir, idx, len(dataset.images)))
 
     # Resume 모드일 경우 기존 완료된 결과 먼저 로드
-    if config.get("resume_dir"):
-        print("Loading previously completed results...")
-        img_list, gt_list, filename_list, adv_img_lists, all_l0_metrics, all_ratio_metrics, all_impact_metrics = \
-            load_completed_results(base_dir, config)
-        print(f"Loaded {len(img_list)} previously completed images")
-    else:
-        # 새로운 실험: 빈 리스트 초기화
-        img_list = []
-        gt_list = []
-        filename_list = []
-        adv_img_lists = [[] for _ in range(6)]
-        all_l0_metrics = [[] for _ in range(6)]
-        all_ratio_metrics = [[] for _ in range(6)]
-        all_impact_metrics = [[] for _ in range(6)]
-
-    # 멀티프로세싱 대신 순차적으로 실행
-    print(f"Sequential processing for {len(process_args)} images...")
-    results = []
-    for args in tqdm(process_args, total=len(process_args), desc="Running Sparse-RS Attack"):
-        result = process_single_image(args)
-        results.append(result)
-
-    # 새로운 결과를 기존 결과에 추가
-    for result in results:
-        img_list.append(result['img_bgr'])
-        gt_list.append(result['gt'])
-        filename_list.append(result['filename'])
-        
-        for i, adv_img_bgr in enumerate(result['adv_img_bgr_list']):
-            adv_img_lists[i].append(adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8))
-            all_l0_metrics[i].append(result['l0_metrics'][i])
-            all_ratio_metrics[i].append(result['ratio_metrics'][i])
-            all_impact_metrics[i].append(result['impact_metrics'][i])
-
-    # 평가를 위한 모델 초기화 (한 번만)
+    # 로드를 위해 모델을 먼저 초기화
     if config["model"] == "setr":
         model = init_model(model_cfg["config"], None, 'cuda')
         checkpoint = torch.load(model_cfg["checkpoint"], map_location='cuda', weights_only=False)
@@ -463,6 +447,93 @@ def main(config):
     del checkpoint
     torch.cuda.empty_cache()
 
+    if config.get("resume_dir"):
+        print("Loading previously completed results...")
+        img_list, filename_list, adv_img_lists, all_l0_metrics, all_ratio_metrics, all_impact_metrics = \
+            load_completed_results(base_dir, config, model)
+        
+        # 완료된 이미지의 파일명을 기반으로 GT 파일 직접 로드
+        gt_list = []
+        
+        # GT 파일 경로 설정 (데이터셋별로 다름)
+        if config["dataset"] == "cityscapes":
+            gt_dir = os.path.join(data_dir, "gtFine", "val")
+        elif config["dataset"] == "ade20k":
+            gt_dir = os.path.join(data_dir, "annotations", "validation")
+        elif config["dataset"] == "VOC2012":
+            gt_dir = os.path.join(data_dir, "SegmentationClass")
+        else:
+            raise ValueError(f"Unsupported dataset: {config['dataset']}")
+        
+        # 각 파일명에 대해 GT 로드
+        for fname in filename_list:
+            # GT 파일 경로 찾기
+            if config["dataset"] == "cityscapes":
+                # cityscapes: city_name/image_name 형식
+                # GT 파일명 패턴: city_name_image_name_gtFine_labelIds.png
+                gt_filename = fname.replace("_leftImg8bit", "_gtFine_labelIds") + ".png"
+                # city별로 하위 폴더가 있으므로 탐색 필요
+                city_name = fname.split("_")[0]
+                gt_path = os.path.join(gt_dir, city_name, gt_filename)
+            elif config["dataset"] == "ade20k":
+                # ade20k: filename.jpg -> filename.png
+                gt_filename = fname + ".png"
+                gt_path = os.path.join(gt_dir, gt_filename)
+            elif config["dataset"] == "VOC2012":
+                # VOC2012: filename.jpg -> filename.png
+                gt_filename = fname + ".png"
+                gt_path = os.path.join(gt_dir, gt_filename)
+            
+            if os.path.exists(gt_path):
+                gt = np.array(Image.open(gt_path))
+                # ADE20K의 경우 label 값을 1 감소 (0-based indexing)
+                if config["dataset"] == "ade20k":
+                    gt = gt - 1
+                    gt[gt < 0] = 255  # background를 255로
+                gt_list.append(gt)
+            else:
+                print(f"Warning: GT file not found: {gt_path}")
+        
+        print(f"Loaded {len(gt_list)} GT files from {gt_dir}")
+        
+        # 남은 이미지가 없으면 결과만 계산하고 종료
+        if not process_args:
+            print("All images already completed! Calculating final results...")
+            # 결과 계산 부분으로 바로 이동
+        else:
+            print(f"Resuming with {len(process_args)} remaining images\n")
+    else:
+        # 새로운 실험: 빈 리스트 초기화
+        img_list = []
+        gt_list = []
+        filename_list = []
+        adv_img_lists = [[] for _ in range(6)]
+        all_l0_metrics = [[] for _ in range(6)]
+        all_ratio_metrics = [[] for _ in range(6)]
+        all_impact_metrics = [[] for _ in range(6)]
+
+    # 남은 이미지가 있을 경우에만 처리
+    if process_args:
+        # 멀티프로세싱 대신 순차적으로 실행
+        print(f"Sequential processing for {len(process_args)} images...")
+        results = []
+        for args in tqdm(process_args, total=len(process_args), desc="Running Sparse-RS Attack"):
+            result = process_single_image(args)
+            results.append(result)
+
+        # 새로운 결과를 기존 결과에 추가
+        for result in results:
+            img_list.append(result['img_bgr'])
+            gt_list.append(result['gt'])
+            filename_list.append(result['filename'])
+            
+            for i, adv_img_bgr in enumerate(result['adv_img_bgr_list']):
+                adv_img_lists[i].append(adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8))
+                all_l0_metrics[i].append(result['l0_metrics'][i])
+                all_ratio_metrics[i].append(result['ratio_metrics'][i])
+                all_impact_metrics[i].append(result['impact_metrics'][i])
+
+    # 모델은 이미 초기화되어 있음 (Resume 모드 지원을 위해 위에서 초기화)
     _, init_mious = eval_miou(model, img_list, img_list, gt_list, config)
     
     benign_to_adv_mious = []

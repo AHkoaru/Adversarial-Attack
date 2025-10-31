@@ -132,3 +132,6 @@ ov-seg/open_clip_training/openclip_data/*
 ov-seg/open_clip_training/src/logs/*
 ov-seg/*__pycache__*
 ov-seg/output/inference/sem_seg_evaluation.pth
+
+SED/ckpt/*
+**/output/
