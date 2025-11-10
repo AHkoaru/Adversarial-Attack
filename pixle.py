@@ -1,10 +1,14 @@
 from itertools import chain
 
+import sys
+import os
 import numpy as np
 import torch
 from torch.nn.functional import softmax
 
 from mmseg.apis import inference_model
+
+sys.path.append(os.path.join(os.path.dirname(__file__), 'Robust-Semantic-Segmentation'))
 from adv_setting import model_predict  # model_predict import 추가
 
 from tqdm import tqdm
@@ -175,28 +179,26 @@ class Pixle():
         bs, C, H, W = images.shape
 
         for idx in range(bs):
-            image, gt = images[idx : idx + 1], gt[idx : idx + 1]
+            image, gt_single = images[idx : idx + 1], gt[idx : idx + 1]
             best_image = image.clone()
             pert_image = image.clone()
 
-            initial_loss, loss, callback = self._get_fun(image, gt)
-            l0_threshold_captured = self.threshold #W * H * 0.001 = 2097
+            initial_loss, loss, callback = self._get_fun(image, gt_single)
+            
             best_solution = None
-
             best_p = initial_loss
             image_probs = [best_p]
 
             query_count = 0
             update_query = 0
-            for r in tqdm(range(self.restarts), desc="Restarts"):
+            
+            for r in range(self.restarts):
                 stop = False
-                # if r == 50:
-                    # best_img_pred = inference_model(self.model, best_image).pred_sem_seg.data.squeeze(0).cpu().numpy().astype(np.uint8)
-                    # visualize_segmentation(best_image, best_img_pred, save_path='./results/pixle_benign1.png', alpha=0.0)
-                    # visualize_segmentation(best_image, best_img_pred, save_path='./results/pixle_benign1.png', alpha=1)
+                
+                # ✅ iteration 내에서 후보들을 저장
+                iteration_candidates = []  # [(loss, pert_image), ...]
 
                 for it in range(self.max_patches):
-
                     (x, y), (x_offset, y_offset) = self.get_patch_coordinates(
                         image=image, x_bounds=x_bounds, y_bounds=y_bounds
                     )
@@ -212,39 +214,58 @@ class Pixle():
                     )
 
                     mean_p = loss(solution=pert_image, solution_as_perturbed=True)
-
                     query_count += 1
+                    
+                    # ✅ 후보로 저장
+                    iteration_candidates.append((mean_p, pert_image))
+                    
+                    # Global best 추적 (전체 최선)
                     if mean_p < best_p:
                         best_p = mean_p
                         best_solution = pert_image
                         update_query = query_count
                     
                     image_probs.append(best_p)
-
-                    # 반복 횟수로 조절해서 필요 없음
-                    # if callback(pert_image, l0_threshold_captured):
-                    #     best_solution = pert_image
-                    #     stop = True
-                    #     break
-                #L0 check
-                # l0_distance = calculate_l0_norm(image.cpu().numpy().astype(np.uint8), pert_image.cpu().numpy().astype(np.uint8))
-                # print(f"L0 distance: {l0_distance}")
-
-                if best_solution is None:
-                    best_image = pert_image
-                else:
-                    best_image = best_solution
-
-                if stop:
-                    break
+                
+                # ✅ iteration 종료 후: 가장 낮은 loss의 이미지로 누적
+                if iteration_candidates:
+                    best_iter_loss, best_iter_image = min(iteration_candidates, key=lambda x: x[0])
+                    best_image = best_iter_image.clone()
+                    
+                    # ✅ 선택된 이미지로 decision loss 상태 업데이트
+                    if self.loss == 'decision_change':
+                        if self.is_mmseg_model:
+                            new_result = inference_model(
+                                self.model, 
+                                best_iter_image.squeeze(0).permute(1, 2, 0).cpu().numpy()
+                            )
+                            new_pred_labels = new_result.pred_sem_seg.data.squeeze().to(self.device)
+                        else:
+                            best_img_np = best_iter_image.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                            _, new_pred_labels = model_predict(self.model, best_img_np, self.model_config)
+                            new_pred_labels = new_pred_labels.to(self.device)
+                        
+                        self.previous_pred_labels = new_pred_labels.clone()
+                    
+                    elif self.loss == 'decision':
+                        if self.is_mmseg_model:
+                            new_result = inference_model(
+                                self.model, 
+                                best_iter_image.squeeze(0).permute(1, 2, 0).cpu().numpy()
+                            )
+                            new_pred_labels = new_result.pred_sem_seg.data.squeeze().to(self.device)
+                        else:
+                            best_img_np = best_iter_image.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                            _, new_pred_labels = model_predict(self.model, best_img_np, self.model_config)
+                            new_pred_labels = new_pred_labels.to(self.device)
+                        
+                        current_changed_pixels = (new_pred_labels != self.original_pred_labels).long()
+                        self.pre_changed_pixels = current_changed_pixels
             
-                #save metrics
-                # --- 중간 저장 로직 ---
+                # 중간 저장 로직
                 if (r+1) % self.save_interval == 0:
                     results["adv_images"].append(best_image)
                     results["query"].append(update_query)
-                # --- ----------------------------- ---
-
 
         # 최종 adv 이미지 Tensor와 결과 딕셔너리 반환
         return results
@@ -581,20 +602,15 @@ class Pixle():
                 return loss_val.detach().cpu().numpy()
 
             elif self.loss == 'decision':
-                # Margin loss calculation
-                gt_indices = final_mask.float().argmax(dim=0)  # (H, W)
-                correct_logits = adv_logits.gather(0, gt_indices.unsqueeze(0)).squeeze(0)  # (H, W)
-
-                adv_logits_clone = adv_logits.clone()
-                h, w = adv_logits.shape[1], adv_logits.shape[2]
-                adv_logits_clone[gt_indices, torch.arange(h).unsqueeze(1).expand(h, w), torch.arange(w).expand(h, w)] = float('-inf')
-                max_wrong_logits, _ = adv_logits_clone.max(dim=0)  # (H, W)
-                margin = correct_logits - max_wrong_logits  # (H, W)
-                valid_pixel_mask = final_mask.any(dim=0)
-                margin_loss = margin[valid_pixel_mask].mean()
-
                 # Decision loss calculation
-                adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+                if self.is_mmseg_model:
+                    adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy())
+                    adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device)
+                else:
+                    pert_img_np = pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                    _, adv_pred_labels = model_predict(self.model, pert_img_np, self.model_config)
+                    adv_pred_labels = adv_pred_labels.to(self.device)
+                
                 H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
                 current_changed_pixels = (adv_pred_labels != self.original_pred_labels).long()
 
@@ -605,22 +621,28 @@ class Pixle():
                     changed_pixels = current_changed_pixels
                 decision_loss = (torch.sum(changed_pixels.float()) / ((H * W * self.eps) * (self.d ** 2)))
 
-                # Update pre_changed_pixels
-                self.pre_changed_pixels = current_changed_pixels
-
-                # Combine margin loss and decision loss
-                total_loss = margin_loss - decision_loss
+                # ✅ 제거: 여기서 pre_changed_pixels 업데이트하지 않음
+                # restart_forward에서 best solution 업데이트 시에만 업데이트
+                
+                # Decision loss만 사용 (음수로 반환) - sparse_rs 스타일
+                total_loss = -decision_loss
                 return total_loss.detach().cpu().numpy()
 
             elif self.loss == 'decision_change':
                 # Decision change loss calculation
-                adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+                if self.is_mmseg_model:
+                    adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy())
+                    adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device)
+                else:
+                    pert_img_np = pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                    _, adv_pred_labels = model_predict(self.model, pert_img_np, self.model_config)
+                    adv_pred_labels = adv_pred_labels.to(self.device)
 
                 # First iteration: use original prediction as previous
                 if self.previous_pred_labels is None:
                     self.previous_pred_labels = self.original_pred_labels.clone()
 
-                # Calculate changed pixels compared to previous prediction
+                # Calculate changed pixels compared to previous BEST prediction
                 changed_pixels = (adv_pred_labels != self.previous_pred_labels).long()
 
                 # Exclude background pixels
@@ -632,8 +654,8 @@ class Pixle():
                 change_ratio = changed_count / (total_valid_pixels + 1e-8)
                 loss_val = -change_ratio  # Negative: more changes = lower loss
 
-                # Update previous_pred_labels for next iteration
-                self.previous_pred_labels = adv_pred_labels.clone()
+                # ✅ 제거: 여기서 previous_pred_labels 업데이트하지 않음
+                # restart_forward에서 best solution 업데이트 시에만 업데이트
 
                 return loss_val.detach().cpu().numpy()
 

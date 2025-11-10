@@ -11,6 +11,12 @@ from mmseg.apis import init_model, inference_model
 from function import *
 from evaluation import *
 from dataset import CitySet, ADESet, VOCSet
+import sys
+# 상위 디렉토리와 현재 디렉토리를 sys.path에 추가 (Docker 환경: /workspace)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.join(current_dir, '..')
+sys.path.insert(0, parent_dir)  # /workspace
+sys.path.insert(0, current_dir)  # /workspace/mmsegmentation
 
 from pixle import Pixle
 from utils import save_experiment_results
@@ -41,41 +47,41 @@ def main(config):
         "cityscapes": {
             "mask2former": {
                 "config": 'configs/mask2former/mask2former_swin-b-in22k-384x384-pre_8xb2-90k_cityscapes-512x1024.py',
-                "checkpoint": 'ckpt/mask2former_swin-b-in22k-384x384-pre_8xb2-90k_cityscapes-512x1024_20221203_045030-9a86a225.pth'
+                "checkpoint": '../ckpt/mask2former_swin-b-in22k-384x384-pre_8xb2-90k_cityscapes-512x1024_20221203_045030-9a86a225.pth'
             },
             "segformer": {
                 "config": 'configs/segformer/segformer_mit-b5_8xb1-160k_cityscapes-1024x1024.py',
-                "checkpoint": 'ckpt/segformer_mit-b5_8x1_1024x1024_160k_cityscapes_20211206_072934-87a052ec.pth'
+                "checkpoint": '../ckpt/segformer_mit-b5_8x1_1024x1024_160k_cityscapes_20211206_072934-87a052ec.pth'
             },
             "deeplabv3": {
                 "config": 'configs/deeplabv3/deeplabv3_r101-d8_4xb2-80k_cityscapes-512x1024.py',
-                "checkpoint": 'ckpt/deeplabv3_r101-d8_512x1024_80k_cityscapes_20200606_113503-9e428899.pth'
+                "checkpoint": '../ckpt/deeplabv3_r101-d8_512x1024_80k_cityscapes_20200606_113503-9e428899.pth'
             },
             "pspnet": {
                 "config": 'configs/pspnet/pspnet_r101-d8_4xb2-80k_cityscapes-512x1024.py',
-                "checkpoint": 'ckpt/pspnet_r101-d8_512x1024_80k_cityscapes_20200606_112211-e1e1100f.pth'
+                "checkpoint": '../ckpt/pspnet_r101-d8_512x1024_80k_cityscapes_20200606_112211-e1e1100f.pth'
             },
             "setr": {
                 "config": 'configs/setr/setr_vit-l_pup_8xb1-80k_cityscapes-768x768.py',
-                "checkpoint": 'ckpt/setr_pup_vit-large_8x1_768x768_80k_cityscapes_20211122_155115-f6f37b8f.pth'
+                "checkpoint": '../ckpt/setr_pup_vit-large_8x1_768x768_80k_cityscapes_20211122_155115-f6f37b8f.pth'
             }
         },
         "ade20k": {
             "mask2former": {
                 "config": 'configs/mask2former/mask2former_swin-b-in22k-384x384-pre_8xb2-160k_ade20k-640x640.py',
-                "checkpoint": 'ckpt/mask2former_swin-b-in22k-384x384-pre_8xb2-160k_ade20k-640x640_20221203_235230-7ec0f569.pth'
+                "checkpoint": '../ckpt/mask2former_swin-b-in22k-384x384-pre_8xb2-160k_ade20k-640x640_20221203_235230-7ec0f569.pth'
             },
             "segformer": {
                 "config": 'configs/segformer/segformer_mit-b5_8xb2-160k_ade20k-640x640.py',
-                "checkpoint": 'ckpt/segformer_mit-b5_640x640_160k_ade20k_20210801_121243-41d2845b.pth'
+                "checkpoint": '../ckpt/segformer_mit-b5_640x640_160k_ade20k_20210801_121243-41d2845b.pth'
             },
             "deeplabv3": {
                 "config": 'configs/deeplabv3/deeplabv3_r101-d8_4xb4-80k_ade20k-512x512.py',
-                "checkpoint": 'ckpt/deeplabv3_r101-d8_512x512_160k_ade20k_20200615_105816-b1f72b3b.pth'
+                "checkpoint": '../ckpt/deeplabv3_r101-d8_512x512_160k_ade20k_20200615_105816-b1f72b3b.pth'
             },
             "pspnet": {
                 "config": 'configs/pspnet/pspnet_r101-d8_4xb4-160k_ade20k-512x512.py',
-                "checkpoint": 'ckpt/pspnet_r101-d8_512x512_160k_ade20k_20200615_100650-967c316f.pth'
+                "checkpoint": '../ckpt/pspnet_r101-d8_512x512_160k_ade20k_20200615_100650-967c316f.pth'
             },
             "setr": {
                 "config": 'configs/setr/setr_vit-l_pup_8xb2-160k_ade20k-512x512.py',
@@ -85,11 +91,11 @@ def main(config):
         "VOC2012": {
             "deeplabv3": {
                 "config": 'configs/deeplabv3/deeplabv3_r101-d8_4xb4-20k_voc12aug-512x512.py',
-                "checkpoint": 'ckpt/deeplabv3_r101-d8_512x512_20k_voc12aug_20200617_010932-8d13832f.pth'
+                "checkpoint": '../ckpt/deeplabv3_r101-d8_512x512_20k_voc12aug_20200617_010932-8d13832f.pth'
             },
             "pspnet": {
                 "config": 'configs/pspnet/pspnet_r101-d8_4xb4-40k_voc12aug-512x512.py',
-                "checkpoint": 'ckpt/pspnet_r101-d8_512x512_20k_voc12aug_20200617_102003-4aef3c9a.pth'
+                "checkpoint": '../ckpt/pspnet_r101-d8_512x512_20k_voc12aug_20200617_102003-4aef3c9a.pth'
             }
         }
     }
@@ -273,6 +279,7 @@ def main(config):
         patch_w_pixels = target_area_int // patch_h_pixels
         # === 패치 크기 계산 로직 끝 ===
         
+        print(f"Image: {image_name}, Target pixels per patch: {pixels_per_single_patch_target}, Patch size: ({patch_h_pixels}, {patch_w_pixels})")
         pixle = Pixle( 
             model,
             x_dimensions=(patch_w_pixels, patch_w_pixels), 
@@ -282,7 +289,8 @@ def main(config):
             threshold=21000,
             device=device,
             cfg = config,
-            is_mmseg_model=True
+            is_mmseg_model=True,
+            loss=config["loss"]
         )
 
         # Ensure input tensor is on the correct device and potentially float
@@ -476,11 +484,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True, help="Path to the config file.")
     parser.add_argument("--device", type=str, default="cuda:0")
-    parser.add_argument("--attack_pixel", type=float, required=True, help="Ratio of adversarial pixels to total image pixels.") # 새 pixel_ratio 인자 추가
+    parser.add_argument("--attack_pixel", type=float, default=0.05, help="Ratio of adversarial pixels to total image pixels.") # 새 pixel_ratio 인자 추가
     parser.add_argument("--num_images", type=int, default=100, help="Number of images to process.")
     parser.add_argument("--restarts", type=int, default=500, help="Number of restarts.")
     parser.add_argument("--max_iterations", type=int, default=10, help="Number of max iterations.")
     parser.add_argument("--resume_dir", type=str, default=None, help="Path to existing experiment directory to resume from.")
+    parser.add_argument('--loss', type=str, default='prob', choices=['margin', 'prob', 'decision', 'decision_change'], help='Loss function for Pixle.')
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -493,4 +502,5 @@ if __name__ == "__main__":
     config["restarts"] = args.restarts
     config["max_iterations"] = args.max_iterations
     config["resume_dir"] = args.resume_dir
+    config["loss"] = args.loss
     main(config)
