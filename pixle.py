@@ -207,8 +207,8 @@ class Pixle():
             query_count = 0
             update_query = 0
             
-            # for r in range(self.restarts):
-            for r in tqdm(range(self.restarts), desc=f"Pixle Attack Restart {idx+1}/{bs}"):
+            for r in range(self.restarts):
+            # for r in tqdm(range(self.restarts), desc=f"Pixle Attack Restart {idx+1}/{bs}"):
                 stop = False
                 
                 # ✅ iteration 내에서 후보들을 저장
