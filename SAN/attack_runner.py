@@ -227,8 +227,12 @@ class AttackRunner:
         # Setup Base Directory for Results (Matching px_eval/rs_eval structure)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         model_name = os.path.splitext(os.path.basename(args.config_file))[0]
+        
+        # Map attack type to proper directory name
+        attack_dir_name = "Pixle" if self.attack_type == "pixle" else "Sparse-RS"
+        
         # data/{AttackMethod}/results/{Dataset}/{ModelName}/{Timestamp}
-        self.base_dir = os.path.join(workspace_dir, "data", self.attack_type, "results", self.dataset_name, model_name, timestamp)
+        self.base_dir = os.path.join(workspace_dir, "data", attack_dir_name, "results", self.dataset_name, model_name, timestamp)
         os.makedirs(self.base_dir, exist_ok=True)
         print(f"Results will be saved to {self.base_dir}")
         
