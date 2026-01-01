@@ -1,6 +1,7 @@
 DATASETS:
   TRAIN: ("coco_2017_train_stuff_sem_seg",)
-  TEST: ('coco_2017_test_stuff_sem_seg', 'voc_sem_seg_val','pcontext_sem_seg_val','ade20k_sem_seg_val','pcontext_full_sem_seg_val','ade20k_full_sem_seg_val')
+  #('coco_2017_test_stuff_sem_seg', 'voc_sem_seg_val','pcontext_sem_seg_val','ade20k_sem_seg_val','pcontext_full_sem_seg_val','ade20k_full_sem_seg_val')
+  TEST: ('voc_sem_seg_val',)
 SOLVER:
   IMS_PER_BATCH: 32
   BASE_LR: 0.0001

@@ -6,7 +6,20 @@ import numpy as np
 import torch
 from torch.nn.functional import softmax
 
-from mmseg.apis import inference_model
+# Add mmsegmentation to path before importing mmseg
+current_dir = os.path.dirname(os.path.abspath(__file__))
+workspace_dir = current_dir
+mmseg_dir = os.path.join(workspace_dir, 'mmsegmentation')
+if mmseg_dir not in sys.path:
+    sys.path.insert(0, mmseg_dir)
+
+# mmseg import를 조건부로 처리
+inference_model = None
+try:
+    from mmseg.apis import inference_model
+except (ImportError, ModuleNotFoundError, AttributeError) as e:
+    print(f"Warning: mmseg.apis.inference_model not available: {e}")
+    inference_model = None
 
 sys.path.append(os.path.join(os.path.dirname(__file__), 'Robust-Semantic-Segmentation'))
 from adv_setting import model_predict  # model_predict import 추가
@@ -58,6 +71,7 @@ class Pixle():
         device=None,
         cfg = None,
         is_mmseg_model=False,
+        is_sed_model=False, # Added flag
         loss='prob',
         eps=0.01,
         d=5,
@@ -69,6 +83,7 @@ class Pixle():
 
         # Check if this is a robust model or mmseg model
         self.is_mmseg_model = is_mmseg_model
+        self.is_sed_model = is_sed_model # Store flag
 
         # Loss function and related parameters
         self.loss = loss
@@ -192,7 +207,8 @@ class Pixle():
             query_count = 0
             update_query = 0
             
-            for r in range(self.restarts):
+            # for r in range(self.restarts):
+            for r in tqdm(range(self.restarts), desc=f"Pixle Attack Restart {idx+1}/{bs}"):
                 stop = False
                 
                 # ✅ iteration 내에서 후보들을 저장
@@ -240,6 +256,11 @@ class Pixle():
                                 best_iter_image.squeeze(0).permute(1, 2, 0).cpu().numpy()
                             )
                             new_pred_labels = new_result.pred_sem_seg.data.squeeze().to(self.device)
+                        elif self.is_sed_model:
+                            # Detectron2 inference
+                            inputs = [{"image": best_iter_image.squeeze(0)}]
+                            outputs = self.model(inputs)
+                            new_pred_labels = outputs[0]["sem_seg"].argmax(dim=0).to(self.device)
                         else:
                             best_img_np = best_iter_image.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
                             _, new_pred_labels = model_predict(self.model, best_img_np, self.model_config)
@@ -254,6 +275,10 @@ class Pixle():
                                 best_iter_image.squeeze(0).permute(1, 2, 0).cpu().numpy()
                             )
                             new_pred_labels = new_result.pred_sem_seg.data.squeeze().to(self.device)
+                        elif self.is_sed_model:
+                            inputs = [{"image": best_iter_image.squeeze(0)}]
+                            outputs = self.model(inputs)
+                            new_pred_labels = outputs[0]["sem_seg"].argmax(dim=0).to(self.device)
                         else:
                             best_img_np = best_iter_image.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
                             _, new_pred_labels = model_predict(self.model, best_img_np, self.model_config)
@@ -353,6 +378,11 @@ class Pixle():
             # 기존 mmseg API 사용
             result = inference_model(self.model, image)
             pred_labels = result.pred_sem_seg.data.squeeze().cpu().numpy().astype(np.uint8) #result shape (1024, 2048)
+        elif self.is_sed_model:
+            # Detectron2
+            inputs = [{"image": image.squeeze(0) if isinstance(image, torch.Tensor) else torch.from_numpy(image).permute(2,0,1)}]
+            outputs = self.model(inputs)
+            pred_labels = outputs[0]["sem_seg"].argmax(dim=0).cpu().numpy().astype(np.uint8)
         else:
             # model_predict 사용
             if isinstance(image, torch.Tensor):
@@ -509,6 +539,13 @@ class Pixle():
                     original_logits = original_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
                     original_probs = softmax(original_logits, dim=0) # Shape: (C, H, W)
                     original_pred_labels = original_result.pred_sem_seg.data.squeeze() # Shape: (H, W)
+                elif self.is_sed_model:
+                    # Detectron2 inference
+                    inputs = [{"image": original_img}]
+                    outputs = self.model(inputs)
+                    original_logits = outputs[0]["sem_seg"].to(self.device)
+                    original_probs = softmax(original_logits, dim=0)
+                    original_pred_labels = original_logits.argmax(dim=0)
                 else:
                     # model_predict 사용 (DataParallel 문제 없음)
                     original_img_np = original_img.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
@@ -587,6 +624,11 @@ class Pixle():
                 adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy())
                 adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
                 adv_probs = softmax(adv_logits, dim=0) # Shape: (C, H, W)
+            elif self.is_sed_model:
+                inputs = [{"image": pert_image_tensor.squeeze(0)}]
+                outputs = self.model(inputs)
+                adv_logits = outputs[0]["sem_seg"].to(self.device)
+                adv_probs = softmax(adv_logits, dim=0)
             else:
                 # model_predict 사용 (DataParallel 문제 없음)
                 from adv_setting import model_predict
@@ -606,6 +648,10 @@ class Pixle():
                 if self.is_mmseg_model:
                     adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy())
                     adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device)
+                elif self.is_sed_model:
+                    inputs = [{"image": pert_image_tensor.squeeze(0)}]
+                    outputs = self.model(inputs)
+                    adv_pred_labels = outputs[0]["sem_seg"].argmax(dim=0).to(self.device)
                 else:
                     pert_img_np = pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
                     _, adv_pred_labels = model_predict(self.model, pert_img_np, self.model_config)
@@ -633,6 +679,10 @@ class Pixle():
                 if self.is_mmseg_model:
                     adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy())
                     adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device)
+                elif self.is_sed_model:
+                    inputs = [{"image": pert_image_tensor.squeeze(0)}]
+                    outputs = self.model(inputs)
+                    adv_pred_labels = outputs[0]["sem_seg"].argmax(dim=0).to(self.device)
                 else:
                     pert_img_np = pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
                     _, adv_pred_labels = model_predict(self.model, pert_img_np, self.model_config)

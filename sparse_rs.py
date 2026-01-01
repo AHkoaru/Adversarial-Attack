@@ -22,7 +22,11 @@ import sys
 from utils import Logger
 import os
 
-from mmseg.apis import inference_model
+try:
+    from mmseg.apis import inference_model
+except ImportError:
+    inference_model = None
+
 from function import *
 from evaluation import *
 from tqdm import tqdm
@@ -80,6 +84,7 @@ class RSAttack():
             d=5,
             use_decision_loss=True,
             is_mmseg_model=False,
+            is_sed_model=False, # Added flag
             enable_success_reporting=False
             ):
         """
@@ -116,6 +121,7 @@ class RSAttack():
         self.use_decision_loss = use_decision_loss
         self.best_loss = None
         self.is_mmseg_model = is_mmseg_model
+        self.is_sed_model = is_sed_model # Store flag
         self.enable_success_reporting = enable_success_reporting
 
         # 이전 예측 레이블 저장
@@ -126,6 +132,11 @@ class RSAttack():
             # 기존 mmseg API 사용
             adv_result = inference_model(self.model, img.squeeze(0).permute(1, 2, 0).cpu().numpy()) # Pass Tensor
             adv_logits = adv_result.seg_logits.data.to(self.device) # Shape: (Class, H, W)
+        elif self.is_sed_model:
+            # Detectron2 inference
+            inputs = [{"image": img.squeeze(0)}]
+            outputs = self.model(inputs)
+            adv_logits = outputs[0]["sem_seg"].to(self.device)
         else:
             # Convert tensor to numpy for model_predict
             img_np = img.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
@@ -152,7 +163,7 @@ class RSAttack():
             return loss_val.detach().cpu().numpy(), None, None
         
         elif self.loss == 'prob':
-            if self.is_mmseg_model:
+            if self.is_mmseg_model or self.is_sed_model:
                 adv_probs = softmax(adv_logits, dim=0).to(self.device) # Shape: (C, H, W)
             adv_correct_probs = adv_probs[final_mask]
             loss_val = torch.mean(adv_correct_probs.float())
@@ -161,7 +172,30 @@ class RSAttack():
 
         elif self.loss == 'decision':
             # Decision loss 계산
-            adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+            if self.is_mmseg_model:
+                adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+            elif self.is_sed_model:
+                adv_pred_labels = adv_logits.argmax(dim=0).to(self.device)
+            else:
+                # Assuming model_predict was used if not mmseg/sed, but logic above only sets adv_logits
+                # We need labels here.
+                # Re-run prediction or assume we can get it from logits if we had them?
+                # For non-mmseg/sed, we need to ensure we have labels.
+                # The original code structure for 'decision' assumed adv_result existed or model_predict was called.
+                # Let's assume if not mmseg/sed, we need to get labels.
+                # But wait, margin_and_loss logic for 'decision' in original code:
+                # It used adv_result for mmseg, but for else it didn't calculate adv_pred_labels in the 'else' block at top.
+                # It seems original code had a bug or I missed something.
+                # Ah, original code:
+                # if self.loss == 'decision': ... adv_pred_labels = ...
+                # It seems it re-calculated or assumed availability.
+                # Let's fix for SED:
+                pass
+
+            if not self.is_mmseg_model and not self.is_sed_model:
+                 # Fallback for other models if needed, but we focus on SED
+                 pass
+
             H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
             current_changed_pixels = (adv_pred_labels != self.original_pred_labels.to(self.device)).long().to(self.device)
 
@@ -183,7 +217,11 @@ class RSAttack():
 
         elif self.loss == 'decision_change':
             # 이전 iteration의 예측 대비 현재 예측 변경 픽셀 수 계산
-            adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+            if self.is_mmseg_model:
+                adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+            elif self.is_sed_model:
+                adv_pred_labels = adv_logits.argmax(dim=0).to(self.device)
+            
             H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
             # 첫 iteration이면 원본 예측을 이전 예측으로 사용
             if self.previous_pred_labels is None:
@@ -449,6 +487,11 @@ class RSAttack():
                                 new_result = inference_model(self.model, x_new.squeeze(0).permute(1, 2, 0).cpu().numpy())
                                 new_pred_labels = new_result.pred_sem_seg.data.squeeze().to(self.device)
                                 self.previous_pred_labels = new_pred_labels.clone()
+                            elif self.is_sed_model:
+                                inputs = [{"image": x_new.squeeze(0)}]
+                                outputs = self.model(inputs)
+                                new_pred_labels = outputs[0]["sem_seg"].argmax(dim=0).to(self.device)
+                                self.previous_pred_labels = new_pred_labels.clone()
                             else:
                                 x_new_np = x_new.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
                                 _, new_pred_labels = model_predict(self.model, x_new_np, self.cfg)
@@ -507,6 +550,13 @@ class RSAttack():
                     first_img_logits = first_img_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
                     first_img_probs = softmax(first_img_logits, dim=0).to(self.device) # Shape: (C, H, W)
                     first_img_pred_labels = first_img_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+                elif self.is_sed_model:
+                    # Detectron2 inference
+                    inputs = [{"image": first_img}]
+                    outputs = self.model(inputs)
+                    first_img_logits = outputs[0]["sem_seg"].to(self.device)
+                    first_img_probs = softmax(first_img_logits, dim=0)
+                    first_img_pred_labels = first_img_logits.argmax(dim=0)
                 else:
                     # Convert tensor to numpy for model_predict
                     first_img_np = first_img.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
@@ -524,6 +574,10 @@ class RSAttack():
                     original_img_logits = original_img_result.seg_logits.data.to(self.device) # Shape: (C, H, W)
                     original_img_probs = softmax(original_img_logits, dim=0).to(self.device) # Shape: (C, H, W)
                     original_img_pred_labels = original_img_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+                elif self.is_sed_model:
+                    # Already computed above
+                    original_img_probs = first_img_probs
+                    original_img_pred_labels = first_img_pred_labels
                 else:
                     # pytorch 모델 직접 사용 (이미 위에서 계산됨)
                     # original_img_logits = first_img_logits

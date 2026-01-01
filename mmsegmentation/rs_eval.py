@@ -115,8 +115,8 @@ def process_single_image(args):
             adv_img_bgr_list.append(adv_img_bgr)
     
     # 모든 save_steps에 도달하지 못한 경우 마지막 결과로 채우기
-    while len(adv_img_bgr_list) < 6:
-        adv_img_bgr_list.append(adv_img_bgr)
+    # while len(adv_img_bgr_list) < 6:
+    #     adv_img_bgr_list.append(adv_img_bgr)
 
     # 결과 저장
     current_img_save_dir = os.path.join(base_dir, os.path.splitext(os.path.basename(filename))[0])

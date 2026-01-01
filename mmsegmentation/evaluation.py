@@ -1,6 +1,27 @@
-import evaluate
-from mmseg.apis import inference_model
+import sys
+import os
 import numpy as np
+import evaluate
+from tqdm import tqdm
+import torch
+
+# Add mmsegmentation to path before importing mmseg
+current_dir = os.path.dirname(os.path.abspath(__file__))
+mmseg_parent_dir = os.path.dirname(current_dir)  # workspace directory
+if mmseg_parent_dir not in sys.path:
+    sys.path.insert(0, mmseg_parent_dir)
+
+# Ensure mmsegmentation itself is in path
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+# mmseg import를 조건부로 처리
+inference_model = None
+try:
+    from mmseg.apis import inference_model
+except (ImportError, ModuleNotFoundError, AttributeError) as e:
+    print(f"Warning: mmseg.apis.inference_model not available in evaluation.py: {e}")
+    inference_model = None
 
 
 def eval_miou(model, dataset, adv_examples, gt_images, config):
@@ -17,8 +38,6 @@ def eval_miou(model, dataset, adv_examples, gt_images, config):
     Returns:
         tuple: (benign_miou_score, adv_miou_score) containing Mean IoU scores for both cases
     """
-    import sys
-    import os
     sys.path.append('/workspace/Robust-Semantic-Segmentation')
     from adv_setting import model_predict
     
@@ -29,19 +48,40 @@ def eval_miou(model, dataset, adv_examples, gt_images, config):
     
     # Check if model has 'cfg' attribute (mmseg model) or is DataParallel wrapped
     is_mmseg = hasattr(model, 'cfg') or (hasattr(model, 'module') and hasattr(model.module, 'cfg'))
+    is_sed_model = config.get('is_sed_model', False)  # Detectron2 SED model flag
     
     for i in range(len(dataset)):
-        if is_mmseg:
+        benign_img = dataset[i]
+        adv_img = adv_examples[i]
+        
+        if is_sed_model:
+            # Detectron2 Inference for benign images
+            img_tensor = torch.from_numpy(benign_img.copy()).permute(2, 0, 1)
+            inputs = [{"image": img_tensor}]
+            with torch.no_grad():
+                outputs = model(inputs)
+                benign_pred = outputs[0]["sem_seg"].argmax(dim=0).cpu().numpy()
+            
+            # Detectron2 Inference for adversarial images
+            img_tensor = torch.from_numpy(adv_img.copy()).permute(2, 0, 1)
+            inputs = [{"image": img_tensor}]
+            with torch.no_grad():
+                outputs = model(inputs)
+                adv_pred = outputs[0]["sem_seg"].argmax(dim=0).cpu().numpy()
+        elif is_mmseg:
             # Use mmseg inference_model for mmseg models
-            benign_predictions.append(inference_model(model, dataset[i]).pred_sem_seg.data.squeeze(0).cpu().numpy().astype(np.uint8))
-            adv_predictions.append(inference_model(model, adv_examples[i]).pred_sem_seg.data.squeeze(0).cpu().numpy().astype(np.uint8))
+            benign_pred = inference_model(model, benign_img).pred_sem_seg.data.squeeze(0).cpu().numpy().astype(np.uint8)
+            adv_pred = inference_model(model, adv_img).pred_sem_seg.data.squeeze(0).cpu().numpy().astype(np.uint8)
         else:
             # Use model_predict for Robust models
-            _, benign_pred = model_predict(model, dataset[i], config)
-            benign_predictions.append(benign_pred.cpu().numpy().astype(np.uint8))
+            _, benign_pred = model_predict(model, benign_img, config)
+            benign_pred = benign_pred.cpu().numpy()
             
-            _, adv_pred = model_predict(model, adv_examples[i], config)
-            adv_predictions.append(adv_pred.cpu().numpy().astype(np.uint8))
+            _, adv_pred = model_predict(model, adv_img, config)
+            adv_pred = adv_pred.cpu().numpy()
+
+        benign_predictions.append(benign_pred)
+        adv_predictions.append(adv_pred)
 
     
     if config["dataset"] == "cityscapes":
