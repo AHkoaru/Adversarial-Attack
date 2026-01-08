@@ -621,6 +621,9 @@ def main(config):
         mean_ratio.append(np.mean(all_ratio_metrics[i]).item())
         mean_impact.append(np.mean(all_impact_metrics[i]).item())
 
+    # Get actual query values (average across images for each checkpoint)
+    actual_query_labels = [int(np.mean(adv_query_lists[i])) if adv_query_lists[i] else 0 for i in range(len(adv_query_lists))]
+
     final_results = {
         # Main metrics in the specified order
         "Init mIoU" : init_mious['mean_iou'],
@@ -635,6 +638,7 @@ def main(config):
         "Impact": mean_impact,
         "Per-category IoU(benign)": benign_to_adv_per_ious,
         "Per-category IoU(gt)": gt_to_adv_per_ious,
+        "Query Labels": actual_query_labels,
     }
     
     # VOC2012 데이터셋일 때만 label 0을 제외한 mIoU 메트릭 추가
@@ -656,8 +660,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run Sparse-RS attack evaluation.")
     parser.add_argument("--config", type=str, required=True, help="Path to the config file.")
     parser.add_argument('--device', type=str, default='cuda', help='Device to use (cuda or cpu).')
-    parser.add_argument('--n_queries', type=int, default=10, help='Max number of queries for RSAttack.')
-    parser.add_argument('--eps', type=float, default=0.0001, help='Epsilon for L0 norm in RSAttack (perturbation budget, e.g., percentage of pixels).')
+    parser.add_argument('--n_queries', type=int, default=10, help='Max number of queries per iteration for RSAttack.')
+    parser.add_argument('--attack_pixel', type=float, default=0.05, help='Ratio of adversarial pixels to total image pixels (e.g., 0.05 for 5%).')
     parser.add_argument('--p_init', type=float, default=0.8, help='Initial probability p_init for RSAttack.')
     parser.add_argument('--n_restarts', type=int, default=1, help='Number of restarts for RSAttack.')
     parser.add_argument('--num_images', type=int, default=100, help='Number of images to evaluate from the dataset.')
@@ -673,8 +677,12 @@ if __name__ == '__main__':
     config["attack_method"] = "Sparse-RS"
     config["device"] = args.device
     config["n_queries"] = args.n_queries
-    config["eps"] = args.eps
-    config["attack_pixel"] = args.eps
+    config["attack_pixel"] = args.attack_pixel
+    
+    # Calculate eps from attack_pixel ratio and iters
+    # eps = attack_pixel / iters
+    config["eps"] = args.attack_pixel / args.iters
+    
     config["p_init"] = args.p_init
     config["n_restarts"] = args.n_restarts
     config["num_images"] = args.num_images
