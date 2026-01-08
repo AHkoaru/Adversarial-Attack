@@ -621,8 +621,8 @@ def main(config):
         mean_ratio.append(np.mean(all_ratio_metrics[i]).item())
         mean_impact.append(np.mean(all_impact_metrics[i]).item())
 
-    # Get actual query values (average across images for each checkpoint)
-    actual_query_labels = [int(np.mean(adv_query_lists[i])) if adv_query_lists[i] else 0 for i in range(len(adv_query_lists))]
+    # Use save_steps as query labels
+    actual_query_labels = save_steps
 
     final_results = {
         # Main metrics in the specified order
