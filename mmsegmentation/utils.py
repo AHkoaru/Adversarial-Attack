@@ -258,12 +258,21 @@ def save_experiment_results(results, config, sweep_config=None, timestamp=None, 
     
     # Experimental Results 섹션 (각 항목은 한 줄에 key: value 형식으로 출력)
     lines.append("\n[Experimental Results]")
+    
+    # Extract query labels if available
+    query_labels = results.get("Query Labels", None)
+    
     for key, value in results.items():
+        if key == "Query Labels":
+            # Skip Query Labels in output - only used internally
+            continue
         if "Per-category IoU" in key and isinstance(value, list) and len(value) > 0:
             # Per-category IoU의 경우 쿼리별로 줄바꿈하여 가독성 개선
             lines.append(f"{key}:")
             for i, query_result in enumerate(value):
-                query_label = ["0query", "1000query", "2000query", "3000query", "4000query", "5000query"][i]
+                # Use actual query labels from results
+                query_label = f"{query_labels[i]}query" if query_labels and i < len(query_labels) else f"checkpoint{i}"
+                
                 if isinstance(query_result, list):
                     # NaN 값들을 "NaN"으로 변환하여 보기 좋게 처리
                     formatted_values = []

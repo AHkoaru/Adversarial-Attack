@@ -65,7 +65,7 @@ def init_model_for_process(model_configs, dataset, model_name, device):
 
 def process_single_image(args):
     """단일 이미지를 처리하는 함수 (멀티프로세싱용)"""
-    (img_bgr, filename, gt, model_configs, config, base_dir, idx, total_images) = args
+    (img_bgr, filename, gt, model_configs, config, base_dir, idx, total_images, save_steps) = args
     
     # 프로세스별 모델 초기화
     model = init_model_for_process(model_configs, config["dataset"], config["model"], config["device"])
@@ -101,18 +101,25 @@ def process_single_image(args):
         enable_success_reporting=False
     )
 
+    levels = len(save_steps)
     adv_img_bgr_list = []
-    total_queries = config["iters"] * config["n_queries"]
-    save_steps = [0] + [int(total_queries * (i+1) / 5) for i in range(5)]  # Include 0 queries
-    
+    adv_query_list = []
+
     # Save original image as 0th result
     adv_img_bgr_list.append(img_tensor_bgr)
+    adv_query_list.append(save_steps[0])
     for iter_idx in range(config["iters"]):
         current_query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
         img_tensor_bgr = adv_img_bgr
         # 다음 iteration을 위해 업데이트
         if current_query in save_steps[1:]:  # Skip the 0 query check since it's already added
             adv_img_bgr_list.append(adv_img_bgr)
+            adv_query_list.append(current_query)
+
+    # Fill missing checkpoints with the latest adv image if not all save_steps were hit
+    while len(adv_img_bgr_list) < levels:
+        adv_img_bgr_list.append(img_tensor_bgr)
+        adv_query_list.append(save_steps[len(adv_img_bgr_list)-1])
     
     # 모든 save_steps에 도달하지 못한 경우 마지막 결과로 채우기
     # while len(adv_img_bgr_list) < 6:
@@ -135,6 +142,7 @@ def process_single_image(args):
     Image.fromarray(gt).save(os.path.join(current_img_save_dir, "gt.png"))
 
     for i, adv_img_bgr in enumerate(adv_img_bgr_list):
+        query_val = adv_query_list[i]
         adv_img_bgr = adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
 
         # For original image (i==0), only calculate metrics without saving images
@@ -144,7 +152,7 @@ def process_single_image(args):
             impact = 0.0
         else:
             # Create query-specific directory for adversarial images only
-            query_img_save_dir = os.path.join(current_img_save_dir, f"{i}000query")
+            query_img_save_dir = os.path.join(current_img_save_dir, f"{query_val}query")
             os.makedirs(query_img_save_dir, exist_ok=True)
 
             # 적대적 이미지에 대한 추론 (main.py 참조)
@@ -192,6 +200,7 @@ def process_single_image(args):
         'gt': gt,
         'filename': filename,
         'adv_img_bgr_list': adv_img_bgr_list,
+        'adv_query_list': adv_query_list,
         'l0_metrics': l0_metrics,
         'ratio_metrics': ratio_metrics,
         'impact_metrics': impact_metrics
@@ -216,14 +225,15 @@ def get_completed_images(resume_dir):
     return completed
 
 
-def load_completed_results(resume_dir, config, model):
+def load_completed_results(resume_dir, config, model, save_steps):
     """resume_dir에서 완료된 이미지의 결과를 로드하고 메트릭을 계산"""
     img_list = []
     filename_list = []
-    adv_img_lists = [[] for _ in range(6)]
-    all_l0_metrics = [[] for _ in range(6)]
-    all_ratio_metrics = [[] for _ in range(6)]
-    all_impact_metrics = [[] for _ in range(6)]
+    levels = len(save_steps)
+    adv_img_lists = [[] for _ in range(levels)]
+    all_l0_metrics = [[] for _ in range(levels)]
+    all_ratio_metrics = [[] for _ in range(levels)]
+    all_impact_metrics = [[] for _ in range(levels)]
 
     if not os.path.exists(resume_dir):
         return img_list, filename_list, adv_img_lists, all_l0_metrics, all_ratio_metrics, all_impact_metrics
@@ -249,8 +259,8 @@ def load_completed_results(resume_dir, config, model):
         ori_result = inference_model(model, img_bgr.copy())
         ori_pred = ori_result.pred_sem_seg.data.squeeze().cpu().numpy()
 
-        # 6개의 adversarial 이미지 로드 및 메트릭 계산
-        for i in range(6):
+        # save_steps에 맞춰 adversarial 이미지 로드 및 메트릭 계산
+        for i, q in enumerate(save_steps):
             if i == 0:
                 # i=0은 original 이미지 사용
                 adv_img_lists[i].append(img_bgr)
@@ -258,8 +268,8 @@ def load_completed_results(resume_dir, config, model):
                 all_ratio_metrics[i].append(0.0)
                 all_impact_metrics[i].append(0.0)
             else:
-                # i=1~5는 각 query 디렉토리에서 로드
-                adv_path = os.path.join(item_path, f"{i}000query", "adv.png")
+                # 쿼리 값 기반 디렉토리에서 로드
+                adv_path = os.path.join(item_path, f"{q}query", "adv.png")
                 if os.path.exists(adv_path):
                     adv_img_rgb = np.array(Image.open(adv_path).convert('RGB'))
                     adv_img_bgr = adv_img_rgb[:, :, ::-1]  # RGB to BGR
@@ -425,10 +435,15 @@ def main(config):
         base_dir = os.path.join(config["base_dir"], current_time)
         os.makedirs(base_dir, exist_ok=True, mode=0o777)
     
+    # 쿼리 체크포인트 계산 (저장/로드에 사용)
+    total_queries = config["iters"] * config["n_restarts"]
+    save_steps = [0] + [int(total_queries * (i+1) / 5) for i in range(5)]  # 균등 5단계 저장
+    levels = len(save_steps)
+
     # 멀티프로세싱을 위한 데이터 준비
     process_args = []
     for idx, (img_bgr, filename, gt) in enumerate(zip(dataset.images, dataset.filenames, dataset.gt_images)):
-        process_args.append((img_bgr, filename, gt, model_cfg, config, base_dir, idx, len(dataset.images)))
+        process_args.append((img_bgr, filename, gt, model_cfg, config, base_dir, idx, len(dataset.images), save_steps))
 
     # Resume 모드일 경우 기존 완료된 결과 먼저 로드
     # 로드를 위해 모델을 먼저 초기화
@@ -450,7 +465,7 @@ def main(config):
     if config.get("resume_dir"):
         print("Loading previously completed results...")
         img_list, filename_list, adv_img_lists, all_l0_metrics, all_ratio_metrics, all_impact_metrics = \
-            load_completed_results(base_dir, config, model)
+            load_completed_results(base_dir, config, model, save_steps)
         
         # 완료된 이미지의 파일명을 기반으로 GT 파일 직접 로드
         gt_list = []
@@ -507,10 +522,10 @@ def main(config):
         img_list = []
         gt_list = []
         filename_list = []
-        adv_img_lists = [[] for _ in range(6)]
-        all_l0_metrics = [[] for _ in range(6)]
-        all_ratio_metrics = [[] for _ in range(6)]
-        all_impact_metrics = [[] for _ in range(6)]
+        adv_img_lists = [[] for _ in range(levels)]
+        all_l0_metrics = [[] for _ in range(levels)]
+        all_ratio_metrics = [[] for _ in range(levels)]
+        all_impact_metrics = [[] for _ in range(levels)]
 
     # 남은 이미지가 있을 경우에만 처리
     if process_args:
@@ -526,7 +541,7 @@ def main(config):
             img_list.append(result['img_bgr'])
             gt_list.append(result['gt'])
             filename_list.append(result['filename'])
-            
+
             for i, adv_img_bgr in enumerate(result['adv_img_bgr_list']):
                 adv_img_lists[i].append(adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8))
                 all_l0_metrics[i].append(result['l0_metrics'][i])
@@ -554,7 +569,7 @@ def main(config):
     benign_to_adv_per_ious = []
     gt_to_adv_per_ious = []
     
-    for i in range(6):
+    for i in range(len(adv_img_lists)):
         benign_to_adv_miou, gt_to_adv_miou = eval_miou(model, img_list, adv_img_lists[i], gt_list, config)
         
         # 기존 메트릭들

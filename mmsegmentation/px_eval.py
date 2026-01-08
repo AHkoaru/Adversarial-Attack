@@ -168,12 +168,15 @@ def main(config):
     img_list = []
     gt_list = []
     filename_list = []
-    adv_img_lists = [[] for _ in range(6)] # Store adv images for each iteration level (0-5)
-    adv_query_lists = [[] for _ in range(6)] # Store adv query for each iteration level (0-5)
-    # Change to 2D lists to match rs_eval.py style
-    all_l0_metrics = [[] for _ in range(6)]
-    all_ratio_metrics = [[] for _ in range(6)]
-    all_impact_metrics = [[] for _ in range(6)]
+    # Query checkpoints (filled later). Defaults based on restarts * iterations (5 splits).
+    expected_queries = None
+    default_queries = None
+    adv_img_lists = None
+    adv_query_lists = None
+    # Metrics lists will be initialized once we know the number of query checkpoints
+    all_l0_metrics = None
+    all_ratio_metrics = None
+    all_impact_metrics = None
 
     #Record start time
     start_time = datetime.datetime.now()
@@ -191,6 +194,10 @@ def main(config):
         base_dir = os.path.join(config["base_dir"], start_timestamp)
         os.makedirs(base_dir, exist_ok=True)
 
+    # Default query splits: restarts * max_iterations, save 5 evenly spaced checkpoints
+    total_queries = config["restarts"] * config["max_iterations"]
+    default_queries = [int(total_queries * (i + 1) / 5) for i in range(5)]
+
     for i, (img_bgr, filename, gt) in tqdm(enumerate(dataset), desc="Generating adversarial examples"):
         setproctitle.setproctitle(f"({i+1}/{len(dataset.images)})_Pixle_{config['dataset']}_{config['model']}_{config['attack_pixel']}")
 
@@ -202,9 +209,39 @@ def main(config):
         # Create individual directory for this image (rs_eval.py style)
         current_img_save_dir = os.path.join(base_dir, image_name)
 
-        # Check if this image has already been processed
-        completion_marker = os.path.join(current_img_save_dir, "5000query", "adv.png")
-        if os.path.exists(completion_marker):
+        # Infer expected query checkpoints from existing folders if not set yet
+        if expected_queries is None and os.path.isdir(current_img_save_dir):
+            existing_dirs = [d for d in os.listdir(current_img_save_dir) if d.endswith("query")]
+            parsed_queries = []
+            for d in existing_dirs:
+                try:
+                    parsed_queries.append(int(d.replace("query", "")))
+                except ValueError:
+                    continue
+            if parsed_queries:
+                expected_queries = sorted(parsed_queries)
+
+        # If still not set, fall back to default_queries
+        if expected_queries is None:
+            expected_queries = default_queries
+
+        # Initialize storage once expected_queries is known
+        if adv_img_lists is None:
+            levels = len(expected_queries) + 1
+            adv_img_lists = [[] for _ in range(levels)]
+            adv_query_lists = [[] for _ in range(levels)]
+            all_l0_metrics = [[] for _ in range(levels)]
+            all_ratio_metrics = [[] for _ in range(levels)]
+            all_impact_metrics = [[] for _ in range(levels)]
+
+        # Check if this image has already been processed (all expected queries exist)
+        already_done = False
+        if expected_queries:
+            already_done = all(
+                os.path.exists(os.path.join(current_img_save_dir, f"{q}query", "adv.png"))
+                for q in expected_queries
+            )
+        if already_done:
             print(f"Skipping already completed image: {image_name}")
             # Load existing results for evaluation
             img_list.append(img_bgr)
@@ -216,15 +253,15 @@ def main(config):
             adv_query_lists[0].append(0)
 
             # Load existing adversarial images and metrics
-            for j in range(5):
-                query_img_save_dir = os.path.join(current_img_save_dir, f"{j+1}000query")
+            for query_val in expected_queries:
+                query_img_save_dir = os.path.join(current_img_save_dir, f"{query_val}query")
                 adv_img_path = os.path.join(query_img_save_dir, "adv.png")
 
                 # Load adversarial image
                 adv_img_rgb = np.array(Image.open(adv_img_path))
                 adv_img_bgr = adv_img_rgb[:, :, ::-1]
-                adv_img_lists[j+1].append(adv_img_bgr)
-                adv_query_lists[j+1].append((j+1)*1000)  # Assume standard query counts
+                adv_img_lists[expected_queries.index(query_val)+1].append(adv_img_bgr)
+                adv_query_lists[expected_queries.index(query_val)+1].append(query_val)
 
                 # Calculate metrics from existing images
                 img_rgb = img_bgr[:, :, ::-1]
@@ -279,7 +316,7 @@ def main(config):
         patch_w_pixels = target_area_int // patch_h_pixels
         # === 패치 크기 계산 로직 끝 ===
         
-        print(f"Image: {image_name}, Target pixels per patch: {pixels_per_single_patch_target}, Patch size: ({patch_h_pixels}, {patch_w_pixels})")
+        # print(f"Image: {image_name}, Target pixels per patch: {pixels_per_single_patch_target}, Patch size: ({patch_h_pixels}, {patch_w_pixels})")
         pixle = Pixle( 
             model,
             x_dimensions=(patch_w_pixels, patch_w_pixels), 
@@ -301,6 +338,18 @@ def main(config):
         adv_examples_rgb_numpy = [x[:, :, ::-1] for x in adv_examples_bgr_numpy] # Convert to RGB for saving and metrics
         example_query = results['query']
 
+        # Use actual query values from Pixle results
+        actual_queries = list(example_query)
+        
+        # Initialize storage if not yet done
+        if adv_img_lists is None:
+            levels = len(actual_queries) + 1
+            adv_img_lists = [[] for _ in range(levels)]
+            adv_query_lists = [[] for _ in range(levels)]
+            all_l0_metrics = [[] for _ in range(levels)]
+            all_ratio_metrics = [[] for _ in range(levels)]
+            all_impact_metrics = [[] for _ in range(levels)]
+
         # Store necessary data for final evaluation
         img_list.append(img_bgr) # Store original BGR image
         gt_list.append(gt)
@@ -310,9 +359,9 @@ def main(config):
         adv_img_lists[0].append(img_bgr) # Store original BGR image as 0th result
         adv_query_lists[0].append(0) # 0 queries for original
         
-        for i in range(5):
-            adv_img_lists[i+1].append(adv_examples_bgr_numpy[i]) # Store BGR adv image
-            adv_query_lists[i+1].append(example_query[i])
+        for idx, q in enumerate(actual_queries):
+            adv_img_lists[idx+1].append(adv_examples_bgr_numpy[idx]) # Store BGR adv image
+            adv_query_lists[idx+1].append(q)
         # --- Loop for saving iteration-specific results and calculating metrics (rs_eval.py style) ---
         # Store metrics for original image (all should be 0) without saving images
         l0 = 0  # No perturbation
@@ -324,13 +373,13 @@ def main(config):
         all_ratio_metrics[0].append(ratio)
         all_impact_metrics[0].append(impact)
         
-        for i in range(5):
+        for idx, q in enumerate(actual_queries):
             # Create query-specific directory for this image
-            query_img_save_dir = os.path.join(current_img_save_dir, f"{i+1}000query")
+            query_img_save_dir = os.path.join(current_img_save_dir, f"{q}query")
             os.makedirs(query_img_save_dir, exist_ok=True)
 
-            current_adv_img_rgb = adv_examples_rgb_numpy[i]
-            current_adv_img_bgr = adv_examples_bgr_numpy[i] # Use BGR for inference if model expects it
+            current_adv_img_rgb = adv_examples_rgb_numpy[idx]
+            current_adv_img_bgr = adv_examples_bgr_numpy[idx] # Use BGR for inference if model expects it
 
             # Save adversarial image (RGB)
             Image.fromarray(current_adv_img_rgb).save(os.path.join(query_img_save_dir, "adv.png"))
@@ -367,9 +416,9 @@ def main(config):
             impact = calculate_impact(img, current_adv_img_rgb, ori_pred, adv_pred)
 
             # Append metrics for this image and iteration level (rs_eval.py style)
-            all_l0_metrics[i+1].append(l0)
-            all_ratio_metrics[i+1].append(ratio)
-            all_impact_metrics[i+1].append(impact)
+            all_l0_metrics[idx+1].append(l0)
+            all_ratio_metrics[idx+1].append(ratio)
+            all_impact_metrics[idx+1].append(impact)
         # --- End of inner loop (i=0 to 4) ---
     # --- End of dataset loop ---
 
@@ -394,7 +443,7 @@ def main(config):
     benign_to_adv_per_ious = []
     gt_to_adv_per_ious = []
     
-    for i in range(6):
+    for i in range(len(adv_img_lists)):
         benign_to_adv_miou, gt_to_adv_miou = eval_miou(model, img_list, adv_img_lists[i], gt_list, config)
         
         # 기존 메트릭들
@@ -446,6 +495,9 @@ def main(config):
         mean_ratio.append(np.mean(all_ratio_metrics[i]).item())
         mean_impact.append(np.mean(all_impact_metrics[i]).item())
 
+    # Get actual query values (average across images for each checkpoint)
+    actual_query_labels = [int(np.mean(adv_query_lists[i])) if adv_query_lists[i] else 0 for i in range(len(adv_query_lists))]
+    
     final_results = {
         # Main metrics in the specified order
         "Init mIoU" : init_mious['mean_iou'],
@@ -460,6 +512,7 @@ def main(config):
         "Impact": mean_impact,
         "Per-category IoU(benign)": benign_to_adv_per_ious,
         "Per-category IoU(gt)": gt_to_adv_per_ious,
+        "Query Labels": actual_query_labels,
     }
     
     # VOC2012 데이터셋일 때만 label 0을 제외한 mIoU 메트릭 추가

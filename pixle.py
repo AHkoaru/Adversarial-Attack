@@ -107,7 +107,9 @@ class Pixle():
         self.pixel_mapping = pixel_mapping.lower()
 
         self.threshold = threshold
-        self.save_interval = restarts // 5
+        # Calculate total queries and checkpoints for saving
+        total_queries = restarts * max_iterations
+        self.query_checkpoints = [int(total_queries * (i + 1) / 5) for i in range(5)]
         self.cfg = cfg
         if self.pixel_mapping not in [
             "random",
@@ -206,6 +208,7 @@ class Pixle():
 
             query_count = 0
             update_query = 0
+            checkpoint_idx = 0  # Track which checkpoint we're approaching
             
             for r in range(self.restarts):
             # for r in tqdm(range(self.restarts), desc=f"Pixle Attack Restart {idx+1}/{bs}"):
@@ -242,6 +245,12 @@ class Pixle():
                         update_query = query_count
                     
                     image_probs.append(best_p)
+                    
+                    # Check if we've reached a checkpoint after each query
+                    if checkpoint_idx < len(self.query_checkpoints) and query_count >= self.query_checkpoints[checkpoint_idx]:
+                        results["adv_images"].append(best_image.clone())
+                        results["query"].append(query_count)
+                        checkpoint_idx += 1
                 
                 # ✅ iteration 종료 후: 가장 낮은 loss의 이미지로 누적
                 if iteration_candidates:
@@ -286,11 +295,6 @@ class Pixle():
                         
                         current_changed_pixels = (new_pred_labels != self.original_pred_labels).long()
                         self.pre_changed_pixels = current_changed_pixels
-            
-                # 중간 저장 로직
-                if (r+1) % self.save_interval == 0:
-                    results["adv_images"].append(best_image)
-                    results["query"].append(update_query)
 
         # 최종 adv 이미지 Tensor와 결과 딕셔너리 반환
         return results
