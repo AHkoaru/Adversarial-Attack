@@ -409,7 +409,7 @@ class AttackRunner:
         # Directory for saving benign predictions as GT for evaluation
         benign_gt_dir = os.path.join(self.base_dir, "benign_gt")
         os.makedirs(benign_gt_dir, exist_ok=True)
-
+        
         for i, sample in tqdm(enumerate(self.dataset), total=min(len(self.dataset), num_images)):
             if i >= num_images:
                 break
