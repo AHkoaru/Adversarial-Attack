@@ -90,7 +90,7 @@ class Pixle():
         self.eps = eps
         self.d = d
 
-        # For decision losses
+        # For descrepancy losses
         self.original_pred_labels = None
         self.pre_changed_pixels = None
         self.previous_pred_labels = None
@@ -248,7 +248,7 @@ class Pixle():
                     best_iter_loss, best_iter_image = min(iteration_candidates, key=lambda x: x[0])
                     best_image = best_iter_image.clone()
                     
-                    # ✅ 선택된 이미지로 decision loss 상태 업데이트
+                    # ✅ 선택된 이미지로 descrepancy loss 상태 업데이트
                     if self.loss == 'decision_change':
                         if self.is_mmseg_model:
                             new_result = inference_model(
@@ -588,12 +588,12 @@ class Pixle():
             # Store original pred labels for decision losses
             self.original_pred_labels = original_pred_labels.clone()
 
-            # Initialize previous_pred_labels for decision_change loss
-            if self.loss == 'decision_change':
+            # Initialize previous_pred_labels for baseline/reduction loss
+            if self.loss in ['baseline', 'reduction']:
                 self.previous_pred_labels = original_pred_labels.clone()
 
-            # Initialize pre_changed_pixels for decision loss
-            if self.loss == 'decision':
+            # Initialize pre_changed_pixels for discrepancy loss
+            if self.loss == 'discrepancy':
                 self.pre_changed_pixels = torch.zeros_like(original_pred_labels).to(self.device)
 
             # 3. Calculate initial loss based on probability of TRUE class at matched locations
@@ -643,8 +643,8 @@ class Pixle():
                 loss_val = torch.mean(adv_correct_probs.float())
                 return loss_val.detach().cpu().numpy()
 
-            elif self.loss == 'decision':
-                # Decision loss calculation
+            elif self.loss == 'discrepancy':
+                # Discrepancy loss: incremental change in predicted labels
                 if self.is_mmseg_model:
                     adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy())
                     adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device)
@@ -665,17 +665,14 @@ class Pixle():
                     changed_pixels = current_changed_pixels - self.pre_changed_pixels
                 else:
                     changed_pixels = current_changed_pixels
-                decision_loss = (torch.sum(changed_pixels.float()) / ((H * W * self.eps) * (self.d ** 2)))
+                discrepancy_loss = (torch.sum(changed_pixels.float()) / ((H * W * self.eps) * (self.d ** 2)))
 
-                # ✅ 제거: 여기서 pre_changed_pixels 업데이트하지 않음
-                # restart_forward에서 best solution 업데이트 시에만 업데이트
-                
-                # Decision loss만 사용 (음수로 반환) - sparse_rs 스타일
-                total_loss = -decision_loss
+                # Discrepancy loss (negative: more changes = lower loss)
+                total_loss = -discrepancy_loss
                 return total_loss.detach().cpu().numpy()
 
-            elif self.loss == 'decision_change':
-                # Decision change loss calculation
+            elif self.loss == 'baseline':
+                # Baseline loss: maximize prediction changes between restarts
                 if self.is_mmseg_model:
                     adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy())
                     adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device)
@@ -688,26 +685,48 @@ class Pixle():
                     _, adv_pred_labels = model_predict(self.model, pert_img_np, self.model_config)
                     adv_pred_labels = adv_pred_labels.to(self.device)
 
-                # First iteration: use original prediction as previous
                 if self.previous_pred_labels is None:
                     self.previous_pred_labels = self.original_pred_labels.clone()
 
-                # Calculate changed pixels compared to previous BEST prediction
-                changed_pixels = (adv_pred_labels != self.previous_pred_labels).long()
-
-                # Exclude background pixels
                 valid_pixel_mask = final_mask.any(dim=0)
+                changed_pixels = (adv_pred_labels != self.previous_pred_labels).long()
                 changed_count = changed_pixels[valid_pixel_mask].sum().float()
                 total_valid_pixels = valid_pixel_mask.sum().float()
-
-                # Calculate change ratio (negative: more changes = lower loss)
                 change_ratio = changed_count / (total_valid_pixels + 1e-8)
-                loss_val = -change_ratio  # Negative: more changes = lower loss
-
-                # ✅ 제거: 여기서 previous_pred_labels 업데이트하지 않음
-                # restart_forward에서 best solution 업데이트 시에만 업데이트
+                loss_val = -change_ratio
 
                 return loss_val.detach().cpu().numpy()
+
+            elif self.loss == 'reduction':
+                # Reduction loss: focus on pixels not yet successfully attacked
+                if self.is_mmseg_model:
+                    adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy())
+                    adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device)
+                elif self.is_sed_model:
+                    inputs = [{"image": pert_image_tensor.squeeze(0)}]
+                    outputs = self.model(inputs)
+                    adv_pred_labels = outputs[0]["sem_seg"].argmax(dim=0).to(self.device)
+                else:
+                    pert_img_np = pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                    _, adv_pred_labels = model_predict(self.model, pert_img_np, self.model_config)
+                    adv_pred_labels = adv_pred_labels.to(self.device)
+
+                H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
+                if self.previous_pred_labels is None:
+                    self.previous_pred_labels = self.original_pred_labels.clone()
+
+                current_success_mask = (adv_pred_labels != self.original_pred_labels).long()
+                changed_pixels = (adv_pred_labels != self.previous_pred_labels).long()
+                new_success_pixels = current_success_mask * changed_pixels
+                valid_pixel_mask = final_mask.any(dim=0)
+                available_pixels = valid_pixel_mask & (current_success_mask == 0)
+                new_success_count = new_success_pixels[available_pixels].sum().float()
+                total_available_pixels = available_pixels.sum().float()
+                change_ratio = new_success_count / (total_available_pixels + 1e-8)
+                loss_val = -change_ratio / ((H * W * self.eps) * (self.d ** 2))
+
+                return loss_val.detach().cpu().numpy()
+
 
             else:
                 raise ValueError(f"Unsupported loss type: {self.loss}")
