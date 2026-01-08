@@ -489,7 +489,7 @@ if __name__ == "__main__":
     parser.add_argument("--restarts", type=int, default=500, help="Number of restarts.")
     parser.add_argument("--max_iterations", type=int, default=10, help="Number of max iterations.")
     parser.add_argument("--resume_dir", type=str, default=None, help="Path to existing experiment directory to resume from.")
-    parser.add_argument('--loss', type=str, default='prob', choices=['margin', 'prob', 'decision', 'decision_change'], help='Loss function for Pixle.')
+    parser.add_argument('--loss', type=str, default='prob', choices=['margin', 'prob', 'discrepancy', 'baseline', 'reduction'], help='Loss function for Pixle.')
     args = parser.parse_args()
 
     config = load_config(args.config)

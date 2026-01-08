@@ -96,7 +96,7 @@ def process_single_image(args):
         log_path=None, # Disable logging for this simple test or provide a path
         original_img=img_bgr,
         d=5,
-        use_decision_loss=config["use_decision_loss"],
+        use_discrepancy_loss=config.get("use_discrepancy_loss", False),
         is_mmseg_model=True,
         enable_success_reporting=False
     )
@@ -648,10 +648,9 @@ if __name__ == '__main__':
     parser.add_argument('--num_images', type=int, default=100, help='Number of images to evaluate from the dataset.')
     parser.add_argument('--iters', type=int, default=500, help='Number of iterations for RSAttack.')
     parser.add_argument('--num_processes', type=int, default=1, help='Number of processes for parallel processing.')
-    parser.add_argument('--use_decision_loss', type=str, default='False', choices=['True', 'False'], help='Whether to use decision loss.')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output.')
     parser.add_argument('--norm', type=str, default='L0', choices=['L0', 'patches'], help='Norm for RSAttack.')
-    parser.add_argument('--loss', type=str, default='prob', choices=['margin', 'prob', 'decision', 'decision_change'], help='Loss function for RSAttack.')
+    parser.add_argument('--loss', type=str, default='prob', choices=['margin', 'prob', 'discrepancy', 'baseline', 'reduction'], help='Loss function for RSAttack.')
     parser.add_argument('--resume', type=str, default=None, help='Path to resume directory (e.g., ./data/Sparse-RS/results/ade20k/deeplabv3/20250127_123456)')
     args = parser.parse_args()
 
@@ -667,11 +666,8 @@ if __name__ == '__main__':
     config["iters"] = args.iters
     config["num_processes"] = args.num_processes
     config["base_dir"] = f"./data/{config['attack_method']}/results/{config['dataset']}/{config['model']}"
-    # decision/decision_change 선택 시 decision loss 자동 활성화
-    if args.loss in ['decision', 'decision_change']:
-        config["use_decision_loss"] = True
-    else:
-        config["use_decision_loss"] = args.use_decision_loss.lower() == 'true'  # 문자열을 boolean으로 변환
+    # discrepancy 기반 보조 손실 여부 설정
+    config["use_discrepancy_loss"] = args.loss == 'discrepancy'
     config["verbose"] = args.verbose
     config["norm"] = args.norm
     config["loss"] = args.loss
