@@ -436,7 +436,8 @@ def main(config):
         os.makedirs(base_dir, exist_ok=True, mode=0o777)
     
     # 쿼리 체크포인트 계산 (저장/로드에 사용)
-    total_queries = config["iters"] * config["n_restarts"]
+    # 총 쿼리 수 = iters * n_queries (iteration당 쿼리 수 기준)
+    total_queries = config["iters"] * config["n_queries"]
     save_steps = [0] + [int(total_queries * (i+1) / 5) for i in range(5)]  # 균등 5단계 저장
     levels = len(save_steps)
 
