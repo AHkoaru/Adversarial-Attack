@@ -94,6 +94,7 @@ class Pixle():
         self.original_pred_labels = None
         self.pre_changed_pixels = None
         self.previous_pred_labels = None
+        self.permanent_success_mask = None  # reduction loss용 영구 성공 마스크
 
         if restarts < 0 or not isinstance(restarts, int):
             raise ValueError(
@@ -188,6 +189,7 @@ class Pixle():
         results = {
             "query": [], # 각 이미지별 중간 저장 시점 반복 횟수 리스트
             "adv_images": [],   # 각 이미지별 중간 저장 이미지 Tensor 리스트
+            "best_queries": [],  # 각 restart별 베스트 쿼리 번호 리스트
         }
 
         images = images.clone().detach().to(self.device)
@@ -214,8 +216,8 @@ class Pixle():
             # for r in tqdm(range(self.restarts), desc=f"Pixle Attack Restart {idx+1}/{bs}"):
                 stop = False
                 
-                # ✅ iteration 내에서 후보들을 저장
-                iteration_candidates = []  # [(loss, pert_image), ...]
+                # ✅ iteration 내에서 후보들을 저장 (query 번호 포함)
+                iteration_candidates = []  # [(loss, pert_image, query_num), ...]
 
                 for it in range(self.max_patches):
                     (x, y), (x_offset, y_offset) = self.get_patch_coordinates(
@@ -235,8 +237,8 @@ class Pixle():
                     mean_p = loss(solution=pert_image, solution_as_perturbed=True)
                     query_count += 1
                     
-                    # ✅ 후보로 저장
-                    iteration_candidates.append((mean_p, pert_image))
+                    # ✅ 후보로 저장 (query 번호 포함)
+                    iteration_candidates.append((mean_p, pert_image, query_count))
                     
                     # Global best 추적 (전체 최선)
                     if mean_p < best_p:
@@ -254,11 +256,15 @@ class Pixle():
                 
                 # ✅ iteration 종료 후: 가장 낮은 loss의 이미지로 누적
                 if iteration_candidates:
-                    best_iter_loss, best_iter_image = min(iteration_candidates, key=lambda x: x[0])
+                    best_iter_loss, best_iter_image, best_iter_query = min(iteration_candidates, key=lambda x: x[0])
                     best_image = best_iter_image.clone()
                     
-                    # ✅ 선택된 이미지로 descrepancy loss 상태 업데이트
-                    if self.loss == 'decision_change':
+                    # 각 restart의 베스트 쿼리만 따로 저장
+                    results["best_queries"].append(best_iter_query)
+                    
+                    # ✅ 선택된 이미지로 손실 함수 상태 업데이트
+                    if self.loss == 'baseline':
+                        # baseline: previous_pred_labels 업데이트
                         if self.is_mmseg_model:
                             new_result = inference_model(
                                 self.model, 
@@ -266,7 +272,6 @@ class Pixle():
                             )
                             new_pred_labels = new_result.pred_sem_seg.data.squeeze().to(self.device)
                         elif self.is_sed_model:
-                            # Detectron2 inference
                             inputs = [{"image": best_iter_image.squeeze(0)}]
                             outputs = self.model(inputs)
                             new_pred_labels = outputs[0]["sem_seg"].argmax(dim=0).to(self.device)
@@ -277,7 +282,51 @@ class Pixle():
                         
                         self.previous_pred_labels = new_pred_labels.clone()
                     
-                    elif self.loss == 'decision':
+                    elif self.loss == 'adap_reduction':
+                        # adap_reduction: previous_pred_labels 업데이트 (restart 내 누적)
+                        if self.is_mmseg_model:
+                            new_result = inference_model(
+                                self.model, 
+                                best_iter_image.squeeze(0).permute(1, 2, 0).cpu().numpy()
+                            )
+                            new_pred_labels = new_result.pred_sem_seg.data.squeeze().to(self.device)
+                        elif self.is_sed_model:
+                            inputs = [{"image": best_iter_image.squeeze(0)}]
+                            outputs = self.model(inputs)
+                            new_pred_labels = outputs[0]["sem_seg"].argmax(dim=0).to(self.device)
+                        else:
+                            best_img_np = best_iter_image.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                            _, new_pred_labels = model_predict(self.model, best_img_np, self.model_config)
+                            new_pred_labels = new_pred_labels.to(self.device)
+                        
+                        self.previous_pred_labels = new_pred_labels.clone()
+                    
+                    elif self.loss == 'reduction':
+                        # reduction: permanent_success_mask 업데이트
+                        if self.is_mmseg_model:
+                            new_result = inference_model(
+                                self.model, 
+                                best_iter_image.squeeze(0).permute(1, 2, 0).cpu().numpy()
+                            )
+                            new_pred_labels = new_result.pred_sem_seg.data.squeeze().to(self.device)
+                        elif self.is_sed_model:
+                            inputs = [{"image": best_iter_image.squeeze(0)}]
+                            outputs = self.model(inputs)
+                            new_pred_labels = outputs[0]["sem_seg"].argmax(dim=0).to(self.device)
+                        else:
+                            best_img_np = best_iter_image.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                            _, new_pred_labels = model_predict(self.model, best_img_np, self.model_config)
+                            new_pred_labels = new_pred_labels.to(self.device)
+                        
+                        # 성공 픽셀을 영구 마스크에 누적
+                        current_success_mask = (new_pred_labels != self.original_pred_labels).long()
+                        self.permanent_success_mask = torch.maximum(
+                            self.permanent_success_mask,
+                            current_success_mask
+                        )
+                    
+                    elif self.loss == 'discrepancy':
+                        # discrepancy: pre_changed_pixels 업데이트
                         if self.is_mmseg_model:
                             new_result = inference_model(
                                 self.model, 
@@ -294,7 +343,7 @@ class Pixle():
                             new_pred_labels = new_pred_labels.to(self.device)
                         
                         current_changed_pixels = (new_pred_labels != self.original_pred_labels).long()
-                        self.pre_changed_pixels = current_changed_pixels
+                        self.pre_changed_pixels = current_changed_pixels.clone()
 
         # 최종 adv 이미지 Tensor와 결과 딕셔너리 반환
         return results
@@ -376,69 +425,6 @@ class Pixle():
         adv_images = torch.cat(adv_images)
 
         return adv_images
-    #안쓰는 함수
-    def _get_prob(self, image, gt):
-        if self.is_mmseg_model:
-            # 기존 mmseg API 사용
-            result = inference_model(self.model, image)
-            pred_labels = result.pred_sem_seg.data.squeeze().cpu().numpy().astype(np.uint8) #result shape (1024, 2048)
-        elif self.is_sed_model:
-            # Detectron2
-            inputs = [{"image": image.squeeze(0) if isinstance(image, torch.Tensor) else torch.from_numpy(image).permute(2,0,1)}]
-            outputs = self.model(inputs)
-            pred_labels = outputs[0]["sem_seg"].argmax(dim=0).cpu().numpy().astype(np.uint8)
-        else:
-            # model_predict 사용
-            if isinstance(image, torch.Tensor):
-                image_np = image.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-            else:
-                image_np = image
-            _, pred_labels = model_predict(self.model, image_np, self.model_config)
-            pred_labels = pred_labels.cpu().numpy().astype(np.uint8)
-        
-        # 비교를 위해 gt_labels를 pred_labels와 동일한 장치 및 dtype으로 이동합니다.
-        gt_labels = gt.to(device=pred_labels.device, dtype=pred_labels.dtype)
-
-        ignore_index = 255
-
-        # 유효한 ground truth 픽셀 마스크 (ignore_index가 아닌 픽셀)
-        valid_gt_mask = (gt_labels != ignore_index)
-
-        # 예측과 ground truth가 *일치하는* 픽셀 마스크 (유효한 gt 내에서)
-        # 이곳이 우리가 평균을 계산할 대상 픽셀입니다.
-        match_mask = (pred_labels == gt_labels) & valid_gt_mask # Shape: (H, W)
-
-        # 모든 로짓에 대해 softmax 확률을 계산합니다.
-        all_probs = softmax(logits, dim=1) # Shape: (1, num_classes, H, W)
-
-        # 각 픽셀 위치에서 클래스들 중 가장 높은 확률 값을 찾습니다.
-        max_all_probs, _ = torch.max(all_probs, dim=1) # Shape: (1, H, W)
-        max_all_probs = max_all_probs.squeeze(0) # Shape: (H, W)
-
-        # 예측이 맞았고 유효한 GT인 픽셀들만 선택합니다.
-        relevant_probs = max_all_probs[match_mask] # 관련 확률값들 (1D 텐서)
-
-        # 선택된 확률 값들의 평균을 계산합니다.
-        if relevant_probs.numel() == 0:
-            # 만약 모든 유효 픽셀에서 예측이 틀렸거나, 유효 픽셀이 없는 경우
-            average_prob = torch.tensor(0.0, device=logits.device)
-        else:
-            # float 타입으로 변환하여 평균 계산
-            average_prob = torch.mean(relevant_probs.float())
-
-        # 계산된 평균 확률 값을 numpy 배열로 변환하여 반환합니다.
-        return average_prob.detach().cpu().numpy()
-    
-    #안쓰는 함수수
-    def loss(self, img, label, target_attack=False):
-
-        p = self._get_prob(img)
-        p = p[np.arange(len(p)), label]
-
-        if target_attack:
-            p = 1 - p
-
-        return p.sum()
 
     def get_patch_coordinates(self, image, x_bounds, y_bounds):
         c, h, w = image.shape[1:]
@@ -592,9 +578,13 @@ class Pixle():
             # Store original pred labels for decision losses
             self.original_pred_labels = original_pred_labels.clone()
 
-            # Initialize previous_pred_labels for baseline/reduction loss
-            if self.loss in ['baseline', 'reduction']:
+            # Initialize previous_pred_labels for baseline/adap_reduction loss
+            if self.loss in ['baseline', 'adap_reduction']:
                 self.previous_pred_labels = original_pred_labels.clone()
+            
+            # Initialize permanent_success_mask for reduction loss
+            if self.loss == 'reduction':
+                self.permanent_success_mask = torch.zeros_like(original_pred_labels)
 
             # Initialize pre_changed_pixels for discrepancy loss
             if self.loss == 'discrepancy':
@@ -689,9 +679,6 @@ class Pixle():
                     _, adv_pred_labels = model_predict(self.model, pert_img_np, self.model_config)
                     adv_pred_labels = adv_pred_labels.to(self.device)
 
-                if self.previous_pred_labels is None:
-                    self.previous_pred_labels = self.original_pred_labels.clone()
-
                 valid_pixel_mask = final_mask.any(dim=0)
                 changed_pixels = (adv_pred_labels != self.previous_pred_labels).long()
                 changed_count = changed_pixels[valid_pixel_mask].sum().float()
@@ -701,7 +688,7 @@ class Pixle():
 
                 return loss_val.detach().cpu().numpy()
 
-            elif self.loss == 'reduction':
+            elif self.loss == 'adap_reduction':
                 # Reduction loss: focus on pixels not yet successfully attacked
                 if self.is_mmseg_model:
                     adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy())
@@ -716,22 +703,57 @@ class Pixle():
                     adv_pred_labels = adv_pred_labels.to(self.device)
 
                 H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
-                if self.previous_pred_labels is None:
-                    self.previous_pred_labels = self.original_pred_labels.clone()
 
                 current_success_mask = (adv_pred_labels != self.original_pred_labels).long()
-                changed_pixels = (adv_pred_labels != self.previous_pred_labels).long()
-                new_success_pixels = current_success_mask * changed_pixels
+                previous_success_mask = (self.previous_pred_labels != self.original_pred_labels).long()
                 valid_pixel_mask = final_mask.any(dim=0)
-                available_pixels = valid_pixel_mask & (current_success_mask == 0)
-                new_success_count = new_success_pixels[available_pixels].sum().float()
+                
+                # 이전에는 성공하지 못했던 픽셀들
+                available_pixels = valid_pixel_mask & (previous_success_mask == 0)
+                
+                # 그 중에서 현재 성공한 픽셀 개수 (새로운 성공)
+                new_success_count = current_success_mask[available_pixels].sum().float()
                 total_available_pixels = available_pixels.sum().float()
                 change_ratio = new_success_count / (total_available_pixels + 1e-8)
                 loss_val = -change_ratio / ((H * W * self.eps) * (self.d ** 2))
 
                 return loss_val.detach().cpu().numpy()
 
+            elif self.loss == 'reduction':
+                # Reduction loss: permanently exclude successfully attacked pixels
+                if self.is_mmseg_model:
+                    adv_result = inference_model(self.model, pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy())
+                    adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device)
+                elif self.is_sed_model:
+                    inputs = [{"image": pert_image_tensor.squeeze(0)}]
+                    outputs = self.model(inputs)
+                    adv_pred_labels = outputs[0]["sem_seg"].argmax(dim=0).to(self.device)
+                else:
+                    pert_img_np = pert_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                    _, adv_pred_labels = model_predict(self.model, pert_img_np, self.model_config)
+                    adv_pred_labels = adv_pred_labels.to(self.device)
 
+                H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
+
+                current_success_mask = (adv_pred_labels != self.original_pred_labels).long()
+                
+                # 영구 마스크는 읽기만 수행 (업데이트는 restart 종료 시에만)
+                # Valid pixels where attack can happen
+                valid_pixel_mask = final_mask.any(dim=0)
+                
+                # 영구적으로 성공하지 못한 픽셀들만 공격 대상
+                available_pixels = valid_pixel_mask & (self.permanent_success_mask == 0)
+                
+                # 그 중에서 현재 새로 성공한 픽셀 개수
+                new_success_pixels = available_pixels & current_success_mask
+                new_success_count = new_success_pixels.sum().float()
+                total_available_pixels = available_pixels.sum().float()
+                change_ratio = new_success_count / (total_available_pixels + 1e-8)
+                loss_val = -change_ratio / ((H * W * self.eps) * (self.d ** 2))
+
+                return loss_val.detach().cpu().numpy()
+
+            
             else:
                 raise ValueError(f"Unsupported loss type: {self.loss}")
         

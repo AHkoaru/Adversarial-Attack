@@ -104,12 +104,14 @@ def process_single_image(args):
     levels = len(save_steps)
     adv_img_bgr_list = []
     adv_query_list = []
+    restart_queries = []  # 각 restart(iteration)별 쿼리 번호 저장
 
     # Save original image as 0th result
     adv_img_bgr_list.append(img_tensor_bgr)
     adv_query_list.append(save_steps[0])
     for iter_idx in range(config["iters"]):
         current_query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
+        restart_queries.append(current_query)  # 각 restart의 쿼리 번호 저장
         img_tensor_bgr = adv_img_bgr
         # 다음 iteration을 위해 업데이트
         if current_query in save_steps[1:]:  # Skip the 0 query check since it's already added
@@ -201,6 +203,7 @@ def process_single_image(args):
         'filename': filename,
         'adv_img_bgr_list': adv_img_bgr_list,
         'adv_query_list': adv_query_list,
+        'restart_queries': restart_queries,  # 각 restart별 쿼리 번호
         'l0_metrics': l0_metrics,
         'ratio_metrics': ratio_metrics,
         'impact_metrics': impact_metrics
@@ -467,6 +470,7 @@ def main(config):
         print("Loading previously completed results...")
         img_list, filename_list, adv_img_lists, all_l0_metrics, all_ratio_metrics, all_impact_metrics = \
             load_completed_results(base_dir, config, model, save_steps)
+        all_restart_queries = []  # Resume 모드에서도 restart 쿼리 추적
         
         # 완료된 이미지의 파일명을 기반으로 GT 파일 직접 로드
         gt_list = []
@@ -527,6 +531,7 @@ def main(config):
         all_l0_metrics = [[] for _ in range(levels)]
         all_ratio_metrics = [[] for _ in range(levels)]
         all_impact_metrics = [[] for _ in range(levels)]
+        all_restart_queries = []  # 각 이미지별 restart 쿼리 저장
 
     # 남은 이미지가 있을 경우에만 처리
     if process_args:
@@ -542,6 +547,7 @@ def main(config):
             img_list.append(result['img_bgr'])
             gt_list.append(result['gt'])
             filename_list.append(result['filename'])
+            all_restart_queries.append(result['restart_queries'])  # 각 restart별 쿼리 저장
 
             for i, adv_img_bgr in enumerate(result['adv_img_bgr_list']):
                 adv_img_lists[i].append(adv_img_bgr.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8))
@@ -624,6 +630,9 @@ def main(config):
 
     # Use save_steps as query labels
     actual_query_labels = save_steps
+    
+    # Calculate average restart queries per iteration position
+    avg_restart_queries = np.mean(all_restart_queries, axis=0).tolist() if all_restart_queries else []
 
     final_results = {
         # Main metrics in the specified order
@@ -640,6 +649,8 @@ def main(config):
         "Per-category IoU(benign)": benign_to_adv_per_ious,
         "Per-category IoU(gt)": gt_to_adv_per_ious,
         "Query Labels": actual_query_labels,
+        "Restart Queries per Image": all_restart_queries,  # 각 이미지별 restart 쿼리
+        "Average Restart Queries": avg_restart_queries,  # 각 restart 위치별 평균 쿼리
     }
     
     # VOC2012 데이터셋일 때만 label 0을 제외한 mIoU 메트릭 추가
