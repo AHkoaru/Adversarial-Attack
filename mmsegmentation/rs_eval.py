@@ -110,8 +110,13 @@ def process_single_image(args):
     adv_img_bgr_list.append(img_tensor_bgr)
     adv_query_list.append(save_steps[0])
     for iter_idx in range(config["iters"]):
-        current_query, adv_img_bgr = attack.perturb(img_tensor_bgr, gt_tensor)
-        restart_queries.append(current_query)  # 각 restart의 쿼리 번호 저장
+        ret = attack.perturb(img_tensor_bgr, gt_tensor)
+        if len(ret) == 3:
+            current_query, adv_img_bgr, best_query = ret
+        else:
+            current_query, adv_img_bgr = ret
+            best_query = current_query
+        restart_queries.append(best_query)  # 베스트 솔루션이 선택된 쿼리 저장
         img_tensor_bgr = adv_img_bgr
         # 다음 iteration을 위해 업데이트
         if current_query in save_steps[1:]:  # Skip the 0 query check since it's already added

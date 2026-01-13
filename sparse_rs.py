@@ -488,7 +488,8 @@ class RSAttack():
                 best_changed_pixels = current_changed_pixels
                 best_aux_loss = initial_aux_loss  # 초기 aux_loss 값 저장
                 best_baseline_pred_labels = None  # baseline 모드에서 restart 종료 시 반영할 최적 예측 레이블
-                self.current_query += 1 
+                self.current_query += 1
+                update_query = self.current_query  # 베스트 솔루션이 업데이트된 쿼리 번호
 
                 # pbar = tqdm(range(1, self.n_queries), desc="Sparse-RS Attack", ncols=120)
                 # for it in pbar:
@@ -524,6 +525,7 @@ class RSAttack():
                         best_aux_loss = aux_loss_value  # 마지막 성공한 업데이트의 aux_loss 값 저장
                         loss_min = loss
                         x_best = x_new.clone()
+                        update_query = self.current_query  # 베스트 솔루션이 업데이트된 쿼리 기록
                         # if self.verbose:
                             # print(f'loss: {loss}, current_query: {self.current_query}')
 
@@ -580,7 +582,7 @@ class RSAttack():
             if self.loss == 'baseline' and best_baseline_pred_labels is not None:
                 self.previous_pred_labels = best_baseline_pred_labels.clone()
 
-            return self.current_query, x_best, best_changed_pixels, True
+            return self.current_query, x_best, best_changed_pixels, update_query
     
     def perturb(self, img, gt):
         """
@@ -682,16 +684,17 @@ class RSAttack():
         
         ret = self.attack_single_run(img, gt, self.mask, first_img_pred_labels)
         if len(ret) == 4:
-            qr_curr, adv_curr, best_changed_pixels, is_success = ret
+            qr_curr, adv_curr, best_changed_pixels, best_query = ret
         else:
+            # 호환성을 위해 기본값 제공
             qr_curr, adv_curr, best_changed_pixels = ret
-            is_success = True
+            best_query = qr_curr
         
         # discrepancy_loss=True이고 best_changed_pixels가 None이 아닌 경우에만 업데이트
         if self.use_discrepancy_loss and best_changed_pixels is not None:
             self.pre_changed_pixels = best_changed_pixels
         
         if self.enable_success_reporting:
-            return qr_curr, adv_curr, is_success
+            return qr_curr, adv_curr, best_query
         else:
-            return qr_curr, adv_curr
+            return qr_curr, adv_curr, best_query
