@@ -173,6 +173,7 @@ def main(config):
     default_queries = None
     adv_img_lists = None
     adv_query_lists = None
+    all_best_queries = []  # 각 이미지별 restart 베스트 쿼리 저장
     # Metrics lists will be initialized once we know the number of query checkpoints
     all_l0_metrics = None
     all_ratio_metrics = None
@@ -336,10 +337,10 @@ def main(config):
         # Process results (assuming results['adv_images'] are BGR tensors)
         adv_examples_bgr_numpy = [(x.squeeze(0).permute(1, 2, 0).cpu().numpy()).astype(np.uint8) for x in results['adv_images']]
         adv_examples_rgb_numpy = [x[:, :, ::-1] for x in adv_examples_bgr_numpy] # Convert to RGB for saving and metrics
-        example_query = results['query']
 
         # Use actual query values from Pixle results
-        actual_queries = list(example_query)
+        actual_queries = results['query']  # checkpoint 기반 쿼리 번호 (5개)
+        best_queries_list = results['best_queries']  # 각 restart별 베스트 쿼리 번호 (250개)
         
         # Initialize storage if not yet done
         if adv_img_lists is None:
@@ -354,6 +355,9 @@ def main(config):
         img_list.append(img_bgr) # Store original BGR image
         gt_list.append(gt)
         filename_list.append(filename) # Store the original full filename maybe for reference
+        
+        # Store best queries for this image
+        all_best_queries.append(best_queries_list)
         
         # Store original image as 0th query result
         adv_img_lists[0].append(img_bgr) # Store original BGR image as 0th result
@@ -498,6 +502,9 @@ def main(config):
     # Get actual query values (average across images for each checkpoint)
     actual_query_labels = [int(np.mean(adv_query_lists[i])) if adv_query_lists[i] else 0 for i in range(len(adv_query_lists))]
     
+    # Calculate average best query for each restart position
+    avg_best_query_per_restart = np.mean(all_best_queries, axis=0).tolist() if all_best_queries else []
+    
     final_results = {
         # Main metrics in the specified order
         "Init mIoU" : init_mious['mean_iou'],
@@ -513,6 +520,8 @@ def main(config):
         "Per-category IoU(benign)": benign_to_adv_per_ious,
         "Per-category IoU(gt)": gt_to_adv_per_ious,
         "Query Labels": actual_query_labels,
+        "Best Queries per Restart": all_best_queries,  # 각 이미지별 restart 베스트 쿼리
+        "Average Best Query per Restart": avg_best_query_per_restart,  # 각 restart 위치별 평균 베스트 쿼리
     }
     
     # VOC2012 데이터셋일 때만 label 0을 제외한 mIoU 메트릭 추가
@@ -542,7 +551,7 @@ if __name__ == "__main__":
     parser.add_argument("--restarts", type=int, default=500, help="Number of restarts.")
     parser.add_argument("--max_iterations", type=int, default=10, help="Number of max iterations.")
     parser.add_argument("--resume_dir", type=str, default=None, help="Path to existing experiment directory to resume from.")
-    parser.add_argument('--loss', type=str, default='prob', choices=['margin', 'prob', 'discrepancy', 'baseline', 'reduction'], help='Loss function for Pixle.')
+    parser.add_argument('--loss', type=str, default='prob', choices=['margin', 'prob', 'discrepancy', 'baseline', 'reduction', 'adap_reduction'], help='Loss function for Pixle.')
     args = parser.parse_args()
 
     config = load_config(args.config)

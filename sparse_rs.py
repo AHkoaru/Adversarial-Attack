@@ -115,6 +115,7 @@ class RSAttack():
         self.original_img = original_img
         self.original_pred_labels = None
         self.success_mask = None  # 공격 성공한 픽셀을 추적하는 마스크
+        self.permanent_success_mask = None  # reduction loss용 영구 성공 마스크
         self.d = d
         self.current_query = 0
         self.verbose = verbose
@@ -215,51 +216,54 @@ class RSAttack():
             # Return loss as numpy float. Lower value means the attack is more successful.
             return total_loss.detach().cpu().numpy(), current_changed_pixels, (-discrepancy_loss).detach().cpu().numpy()
 
-        elif self.loss == 'reduction':
-            # 이전 iteration의 예측 대비 현재 예측 변경 픽셀 수 계산
+        elif self.loss == 'adap_reduction':
+            # 이전 iteration에서 성공하지 못했던 픽셀에 집중하는 적응형 감소 손실
             if self.is_mmseg_model:
-                adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device) # Shape: (H, W)
+                adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device)
             elif self.is_sed_model:
                 adv_pred_labels = adv_logits.argmax(dim=0).to(self.device)
-            
+            else:
+                adv_pred_labels = adv_logits.argmax(dim=0).to(self.device)
+
             H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
-            # 첫 iteration이면 원본 예측을 이전 예측으로 사용
-            if self.previous_pred_labels is None:
-                self.previous_pred_labels = self.original_pred_labels.clone()
-            
-            # 성공 마스크 초기화 (첫 iteration)
-            if self.success_mask is None:
-                self.success_mask = torch.zeros_like(self.original_pred_labels)
 
-            # 공격 성공 마스크: 원본과 다른 예측 (성공적으로 변경된 픽셀)
             current_success_mask = (adv_pred_labels != self.original_pred_labels).long()
-            
-            # 이전 예측 대비 변경된 픽셀 계산
-            changed_pixels = (adv_pred_labels != self.previous_pred_labels).long()
-            
-            # 새로운 성공 픽셀: 이번 iteration에 새로 성공한 픽셀
-            new_success_pixels = current_success_mask * changed_pixels
-            
-            # 배경 픽셀 제외
+            previous_success_mask = (self.previous_pred_labels != self.original_pred_labels).long()
+
             valid_pixel_mask = final_mask.any(dim=0)
-            
-            # 현재 성공하지 못한 픽셀만 대상으로 계산
-            available_pixels = valid_pixel_mask & (current_success_mask == 0)
-            new_success_count = new_success_pixels[available_pixels].sum().float()
+            available_pixels = valid_pixel_mask & (previous_success_mask == 0)
+
+            new_success_count = current_success_mask[available_pixels].sum().float()
             total_available_pixels = available_pixels.sum().float()
-
-            # 변경 비율 계산 (음수로 반환: 변경이 많을수록 loss 감소)
             change_ratio = new_success_count / (total_available_pixels + 1e-8)
-            
-            loss_val = -change_ratio  / ((H * W * self.eps) * (self.d ** 2)) 
+            loss_val = -change_ratio / ((H * W * self.eps) * (self.d ** 2))
 
-            if self.verbose:
-                print(f'New success pixels: {new_success_count.item():.0f}/{total_available_pixels.item():.0f}, '
-                      f'Change ratio: {change_ratio.item():.4f}, Loss: {loss_val.item():.4f}')
-                print(f'Total success pixels so far: {current_success_mask.sum().item():.0f}')
+            return loss_val.detach().cpu().numpy(), current_success_mask, change_ratio.detach().cpu().numpy()
 
-            # Return: loss (음수), changed_pixels mask, change_ratio (양수)
-            return loss_val.detach().cpu().numpy(), changed_pixels, change_ratio.detach().cpu().numpy()
+        elif self.loss == 'reduction':
+            # 한번이라도 성공한 픽셀은 영구적으로 제외하는 감소 손실
+            if self.is_mmseg_model:
+                adv_pred_labels = adv_result.pred_sem_seg.data.squeeze().to(self.device)
+            elif self.is_sed_model:
+                adv_pred_labels = adv_logits.argmax(dim=0).to(self.device)
+            else:
+                adv_pred_labels = adv_logits.argmax(dim=0).to(self.device)
+
+            H, W = adv_pred_labels.shape[0], adv_pred_labels.shape[1]
+
+            current_success_mask = (adv_pred_labels != self.original_pred_labels).long()
+
+            # 영구 마스크는 읽기만 수행 (업데이트는 best solution 갱신 시에만)
+            valid_pixel_mask = final_mask.any(dim=0)
+            available_pixels = valid_pixel_mask & (self.permanent_success_mask == 0)
+
+            new_success_pixels = available_pixels & current_success_mask
+            new_success_count = new_success_pixels.sum().float()
+            total_available_pixels = available_pixels.sum().float()
+            change_ratio = new_success_count / (total_available_pixels + 1e-8)
+            loss_val = -change_ratio / ((H * W * self.eps) * (self.d ** 2))
+
+            return loss_val.detach().cpu().numpy(), current_success_mask, change_ratio.detach().cpu().numpy()
 
         elif self.loss == 'baseline':
             # 연속된 예측이 달라지도록 유도하는 기준 손실
@@ -269,9 +273,6 @@ class RSAttack():
                 adv_pred_labels = adv_logits.argmax(dim=0).to(self.device)
             else:
                 adv_pred_labels = adv_logits.argmax(dim=0).to(self.device)
-
-            if self.previous_pred_labels is None:
-                self.previous_pred_labels = self.original_pred_labels.clone()
 
             valid_pixel_mask = final_mask.any(dim=0)
             changed_pixels = (adv_pred_labels != self.previous_pred_labels).long()
@@ -526,8 +527,8 @@ class RSAttack():
                         # if self.verbose:
                             # print(f'loss: {loss}, current_query: {self.current_query}')
 
-                        # reduction loss 사용 시 이전 예측 레이블 업데이트
-                        if self.loss == 'reduction':
+                        # adap_reduction: 후보가 개선되면 이전 예측 업데이트
+                        if self.loss == 'adap_reduction':
                             new_pred_labels = self._refresh_previous_pred_labels(x_new)
 
                             # 성공 마스크 업데이트: 현재 상태 기준으로 재계산
@@ -536,6 +537,20 @@ class RSAttack():
                             
                             if self.verbose:
                                 print(f'Success mask updated. Total successful pixels: {self.success_mask.sum().item():.0f}')
+
+                        elif self.loss == 'reduction':
+                            # reduction: 후보가 개선되면 영구 마스크 업데이트
+                            new_pred_labels = self._get_pred_labels(x_new)
+                            current_success_mask = (new_pred_labels != self.original_pred_labels).long()
+                            
+                            # 성공 픽셀을 영구 마스크에 누적
+                            self.permanent_success_mask = torch.maximum(
+                                self.permanent_success_mask,
+                                current_success_mask
+                            )
+                            
+                            if self.verbose:
+                                print(f'Permanent mask updated. Total successful pixels: {self.permanent_success_mask.sum().item():.0f}')
 
                         elif self.loss == 'baseline':
                             # 현재 restart에서 최고의 예측 레이블을 기록만 해두고,
@@ -626,13 +641,13 @@ class RSAttack():
                 
                 self.original_pred_labels = original_img_pred_labels.clone()
 
-                # reduction/baseline loss 사용 시 초기 예측 레이블 저장
-                if self.loss == 'reduction':
+                # loss별 초기 상태 설정
+                if self.loss == 'adap_reduction':
                     self.previous_pred_labels = original_img_pred_labels.clone()
-                    # 성공 마스크 초기화
-                    self.success_mask = torch.zeros_like(original_img_pred_labels)
                 elif self.loss == 'baseline':
                     self.previous_pred_labels = original_img_pred_labels.clone()
+                elif self.loss == 'reduction':
+                    self.permanent_success_mask = torch.zeros_like(original_img_pred_labels)
 
                 # 2. Create masks
                 ignore_index = 255
