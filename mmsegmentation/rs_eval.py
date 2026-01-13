@@ -686,7 +686,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_processes', type=int, default=1, help='Number of processes for parallel processing.')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output.')
     parser.add_argument('--norm', type=str, default='L0', choices=['L0', 'patches'], help='Norm for RSAttack.')
-    parser.add_argument('--loss', type=str, default='prob', choices=['margin', 'prob', 'discrepancy', 'baseline', 'reduction'], help='Loss function for RSAttack.')
+    parser.add_argument('--loss', type=str, default='prob', choices=['margin', 'prob', 'discrepancy', 'baseline', 'reduction', 'adap_reduction'], help='Loss function for RSAttack.')
     parser.add_argument('--resume', type=str, default=None, help='Path to resume directory (e.g., ./data/Sparse-RS/results/ade20k/deeplabv3/20250127_123456)')
     args = parser.parse_args()
 
