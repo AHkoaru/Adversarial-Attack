@@ -488,6 +488,8 @@ class RSAttack():
                 best_changed_pixels = current_changed_pixels
                 best_aux_loss = initial_aux_loss  # 초기 aux_loss 값 저장
                 best_baseline_pred_labels = None  # baseline 모드에서 restart 종료 시 반영할 최적 예측 레이블
+                best_adap_pred_labels = None  # adap_reduction 모드에서 restart 종료 시 반영할 최적 예측 레이블
+                best_reduction_pred_labels = None  # reduction 모드에서 restart 종료 시 반영할 최적 예측 레이블
                 self.current_query += 1
                 update_query = self.current_query  # 베스트 솔루션이 업데이트된 쿼리 번호
 
@@ -529,30 +531,14 @@ class RSAttack():
                         # if self.verbose:
                             # print(f'loss: {loss}, current_query: {self.current_query}')
 
-                        # adap_reduction: 후보가 개선되면 이전 예측 업데이트
+                        # adap_reduction: best만 기록, restart 끝에서 갱신
                         if self.loss == 'adap_reduction':
-                            new_pred_labels = self._refresh_previous_pred_labels(x_new)
-
-                            # 성공 마스크 업데이트: 현재 상태 기준으로 재계산
-                            current_success_mask = (new_pred_labels != self.original_pred_labels).long()
-                            self.success_mask = current_success_mask
-                            
-                            if self.verbose:
-                                print(f'Success mask updated. Total successful pixels: {self.success_mask.sum().item():.0f}')
+                            # restart 종료 시 반영할 best 예측 레이블 기록만 해둠
+                            best_adap_pred_labels = self._get_pred_labels(x_new)
 
                         elif self.loss == 'reduction':
-                            # reduction: 후보가 개선되면 영구 마스크 업데이트
-                            new_pred_labels = self._get_pred_labels(x_new)
-                            current_success_mask = (new_pred_labels != self.original_pred_labels).long()
-                            
-                            # 성공 픽셀을 영구 마스크에 누적
-                            self.permanent_success_mask = torch.maximum(
-                                self.permanent_success_mask,
-                                current_success_mask
-                            )
-                            
-                            if self.verbose:
-                                print(f'Permanent mask updated. Total successful pixels: {self.permanent_success_mask.sum().item():.0f}')
+                            # reduction: best만 기록, restart 끝에서 갱신
+                            best_reduction_pred_labels = self._get_pred_labels(x_new)
 
                         elif self.loss == 'baseline':
                             # 현재 restart에서 최고의 예측 레이블을 기록만 해두고,
@@ -577,10 +563,33 @@ class RSAttack():
                             b_all[img_idx] = temp_b
                             be_all[img_idx] = temp_be
 
-
             # baseline 모드: restart 기준으로 previous_pred_labels 반영
             if self.loss == 'baseline' and best_baseline_pred_labels is not None:
                 self.previous_pred_labels = best_baseline_pred_labels.clone()
+
+            # adap_reduction 모드: restart 끝에서 previous_pred_labels 갱신
+            if self.loss == 'adap_reduction' and best_adap_pred_labels is not None:
+                self.previous_pred_labels = best_adap_pred_labels.clone()
+                current_success_mask = (best_adap_pred_labels != self.original_pred_labels).long()
+                self.success_mask = current_success_mask
+                if self.verbose:
+                    print(f'[Restart end] Success mask updated. Total successful pixels: {self.success_mask.sum().item():.0f}')
+
+            # reduction 모드: restart 끝에서 permanent_success_mask 갱신
+            if self.loss == 'reduction' and best_reduction_pred_labels is not None:
+                current_success_mask = (best_reduction_pred_labels != self.original_pred_labels).long()
+                self.permanent_success_mask = torch.maximum(
+                    self.permanent_success_mask,
+                    current_success_mask
+                )
+                if self.verbose:
+                    print(f'[Restart end] Permanent mask updated. Total successful pixels: {self.permanent_success_mask.sum().item():.0f}')
+
+            # discrepancy 모드: restart 끝에서 pre_changed_pixels 갱신
+            if self.loss == 'discrepancy' and best_changed_pixels is not None:
+                self.pre_changed_pixels = best_changed_pixels.clone()
+                if self.verbose:
+                    print(f'[Restart end] Pre-changed pixels updated. Total changed: {self.pre_changed_pixels.sum().item():.0f}')
 
             return self.current_query, x_best, best_changed_pixels, update_query
     
@@ -690,11 +699,6 @@ class RSAttack():
             qr_curr, adv_curr, best_changed_pixels = ret
             best_query = qr_curr
         
-        # discrepancy_loss=True이고 best_changed_pixels가 None이 아닌 경우에만 업데이트
-        if self.use_discrepancy_loss and best_changed_pixels is not None:
-            self.pre_changed_pixels = best_changed_pixels
+        # 상태 갱신은 attack_single_run 끝에서 처리됨
         
-        if self.enable_success_reporting:
-            return qr_curr, adv_curr, best_query
-        else:
-            return qr_curr, adv_curr, best_query
+        return qr_curr, adv_curr, best_query
