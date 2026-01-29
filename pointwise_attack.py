@@ -100,6 +100,14 @@ class PointWiseAttack:
         self.success_threshold = success_threshold
         self.verbose = verbose
         self.device = torch.device('cuda')
+        self.ignore_index = 255  # Default: Cityscapes uses 255, can be changed via set_ignore_index
+
+    def set_ignore_index(self, dataset_name):
+        """Set ignore index based on dataset name."""
+        if dataset_name.lower() == 'cityscapes':
+            self.ignore_index = 255
+        else:  # VOC2012, ADE20K, etc.
+            self.ignore_index = 0
 
     def _get_pred_labels(self, img):
         """Get prediction labels from model for the given image tensor."""
@@ -146,18 +154,27 @@ class PointWiseAttack:
             
         Returns:
             is_adv: Boolean indicating if attack is successful
-            changed_ratio: Ratio of pixels that changed prediction
+            changed_ratio: Ratio of pixels that changed prediction (excluding background)
         """
         pred_labels = self._get_pred_labels(img)
         
+        # 배경/ignore class 제외 마스크
+        foreground_mask = original_pred_labels != self.ignore_index
+        
         if targeted and target_labels is not None:
             # Targeted attack: success if prediction matches target
-            match_ratio = (pred_labels == target_labels).float().mean()
+            if foreground_mask.sum() > 0:
+                match_ratio = ((pred_labels == target_labels) & foreground_mask).float().sum() / foreground_mask.float().sum()
+            else:
+                match_ratio = (pred_labels == target_labels).float().mean()
             is_adv = match_ratio > self.success_threshold
             return is_adv, match_ratio.item()
         else:
-            # Untargeted attack: success if prediction differs from original
-            changed_ratio = (pred_labels != original_pred_labels).float().mean()
+            # Untargeted attack: success if prediction differs from original (excluding background)
+            if foreground_mask.sum() > 0:
+                changed_ratio = ((pred_labels != original_pred_labels) & foreground_mask).float().sum() / foreground_mask.float().sum()
+            else:
+                changed_ratio = (pred_labels != original_pred_labels).float().mean()
             is_adv = changed_ratio > self.success_threshold
             return is_adv, changed_ratio.item()
 
@@ -202,7 +219,7 @@ class PointWiseAttack:
                 
         return adv_value, nquery
 
-    def pw_perturb(self, oimg, timg, original_pred_labels, target_labels=None, targeted=False, max_query=1000):
+    def pw_perturb(self, oimg, timg, original_pred_labels, target_labels=None, targeted=False, max_query=1000, snapshot_interval=100):
         """
         Single-pixel PointWise perturbation attack.
         
@@ -213,11 +230,13 @@ class PointWiseAttack:
             target_labels: Target labels for targeted attack
             targeted: Whether this is a targeted attack
             max_query: Maximum number of queries
+            snapshot_interval: Interval for saving snapshots (default: 100)
             
         Returns:
             x: Perturbed image (flattened)
             nquery: Total queries used
             D: L0 distance history
+            snapshots: Dict of {query: image_copy} at each snapshot interval
         """
         # Convert to numpy if tensor
         if isinstance(oimg, torch.Tensor):
@@ -240,6 +259,13 @@ class PointWiseAttack:
         nquery = 0
         D = np.zeros(max_query + 500).astype(int)
         d = l0_distance(oimg, x.reshape(shape))
+        
+        # Snapshot storage
+        snapshots = {}
+        next_snapshot = snapshot_interval
+        
+        # Save initial state (query=0)
+        snapshots[0] = x.copy().reshape(shape)
 
         terminate = False
 
@@ -275,6 +301,11 @@ class PointWiseAttack:
                         print(f'nqry = {nquery}; Reset value -> L0 = {d}; changed_ratio = {changed_ratio:.4f}')
                 else:
                     x[index] = old_value
+
+                # Save snapshot at intervals
+                if nquery >= next_snapshot:
+                    snapshots[next_snapshot] = x.copy().reshape(shape)
+                    next_snapshot += snapshot_interval
 
                 if nquery > max_query:
                     terminate = True
@@ -338,6 +369,11 @@ class PointWiseAttack:
                     else:
                         x[index] = old_value
 
+                # Save snapshot at intervals
+                if nquery >= next_snapshot:
+                    snapshots[next_snapshot] = x.copy().reshape(shape)
+                    next_snapshot += snapshot_interval
+
                 if nquery > max_query:
                     terminate = True
                     break
@@ -347,10 +383,14 @@ class PointWiseAttack:
 
         d = l0_distance(oimg, x.reshape(shape))
         D[end_qry:nquery] = d
+        
+        # Save final snapshot
+        snapshots['final'] = x.copy().reshape(shape)
+        snapshots['final_query'] = nquery
 
-        return x, nquery, D[:nquery]
+        return x, nquery, D[:nquery], snapshots
 
-    def pw_perturb_multiple(self, oimg, timg, original_pred_labels, target_labels=None, targeted=False, npix=196, max_query=1000):
+    def pw_perturb_multiple(self, oimg, timg, original_pred_labels, target_labels=None, targeted=False, npix=196, max_query=1000, snapshot_interval=100):
         """
         Multiple-pixel PointWise perturbation attack.
         Perturbs groups of pixels instead of single pixels for efficiency.
@@ -363,11 +403,13 @@ class PointWiseAttack:
             targeted: Whether this is a targeted attack
             npix: Number of pixels per group
             max_query: Maximum number of queries
+            snapshot_interval: Interval for saving snapshots
             
         Returns:
             x: Perturbed image (flattened)
             nquery: Total queries used
             D: L0 distance history
+            snapshots: Dict of {query: image_copy} at each snapshot interval
         """
         # Convert to numpy if tensor
         if isinstance(oimg, torch.Tensor):
@@ -390,6 +432,13 @@ class PointWiseAttack:
         D = np.zeros(max_query + 500).astype(int)
         d = l0_distance(oimg, x.reshape(shape))
         ngroup = N // npix
+        
+        # Snapshot storage
+        snapshots = {}
+        next_snapshot = snapshot_interval
+        
+        # Save initial state (query=0)
+        snapshots[0] = x.copy().reshape(shape)
 
         terminate = False
 
@@ -426,6 +475,11 @@ class PointWiseAttack:
                         print(f'nqry = {nquery}; Group reset -> L0 = {d}; changed_ratio = {changed_ratio:.4f}')
                 else:
                     x[idx] = old_value
+
+                # Save snapshot at intervals
+                if nquery >= next_snapshot:
+                    snapshots[next_snapshot] = x.copy().reshape(shape)
+                    next_snapshot += snapshot_interval
 
                 if nquery > max_query:
                     terminate = True
@@ -492,6 +546,11 @@ class PointWiseAttack:
                     else:
                         x[idx] = old_value
 
+                # Save snapshot at intervals
+                if nquery >= next_snapshot:
+                    snapshots[next_snapshot] = x.copy().reshape(shape)
+                    next_snapshot += snapshot_interval
+
                 if nquery > max_query:
                     terminate = True
                     break
@@ -501,10 +560,14 @@ class PointWiseAttack:
 
         d = l0_distance(oimg, x.reshape(shape))
         D[end_qry:nquery] = d
+        
+        # Save final snapshot
+        snapshots['final'] = x.copy().reshape(shape)
+        snapshots['final_query'] = nquery
 
-        return x, nquery, D[:nquery]
+        return x, nquery, D[:nquery], snapshots
 
-    def pw_perturb_multiple_scheduling(self, oimg, timg, original_pred_labels, target_labels=None, targeted=False, npix=196, max_query=1000):
+    def pw_perturb_multiple_scheduling(self, oimg, timg, original_pred_labels, target_labels=None, targeted=False, npix=196, max_query=1000, snapshot_interval=100):
         """
         Multiple-pixel PointWise attack with adaptive group size scheduling.
         Starts with larger groups and reduces size over iterations.
@@ -517,11 +580,13 @@ class PointWiseAttack:
             targeted: Whether this is a targeted attack
             npix: Initial number of pixels per group
             max_query: Maximum number of queries
+            snapshot_interval: Interval for saving snapshots
             
         Returns:
             x: Perturbed image (flattened)
             nquery: Total queries used
             D: L0 distance history
+            snapshots: Dict of {query: image_copy} at each snapshot interval
         """
         # Convert to numpy if tensor
         if isinstance(oimg, torch.Tensor):
@@ -543,6 +608,13 @@ class PointWiseAttack:
         nquery = 0
         D = np.zeros(max_query + 500).astype(int)
         d = l0_distance(oimg, x.reshape(shape))
+        
+        # Snapshot storage
+        snapshots = {}
+        next_snapshot = snapshot_interval
+        
+        # Save initial state (query=0)
+        snapshots[0] = x.copy().reshape(shape)
 
         terminate = False
 
@@ -580,6 +652,11 @@ class PointWiseAttack:
                         print(f'nqry = {nquery}; npix = {npix}; L0 = {d}; changed_ratio = {changed_ratio:.4f}')
                 else:
                     x[idx] = old_value
+
+                # Save snapshot at intervals
+                if nquery >= next_snapshot:
+                    snapshots[next_snapshot] = x.copy().reshape(shape)
+                    next_snapshot += snapshot_interval
 
                 if nquery > max_query:
                     terminate = True
@@ -651,6 +728,11 @@ class PointWiseAttack:
                     else:
                         x[idx] = old_value
 
+                # Save snapshot at intervals
+                if nquery >= next_snapshot:
+                    snapshots[next_snapshot] = x.copy().reshape(shape)
+                    next_snapshot += snapshot_interval
+
                 if nquery > max_query:
                     terminate = True
                     break
@@ -661,7 +743,7 @@ class PointWiseAttack:
         d = l0_distance(oimg, x.reshape(shape))
         D[end_qry:nquery] = d
 
-        return x, nquery, D[:nquery]
+        return x, nquery, D[:nquery], snapshots
 
     def perturb(self, img, gt, starting_adv=None, mode='single', npix=196, max_query=1000):
         """

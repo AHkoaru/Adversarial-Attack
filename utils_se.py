@@ -7,16 +7,30 @@
 
 '''
 import torch
-from pudb import set_trace
 import torch.nn as nn
 from torchvision import datasets, transforms, models
 import torch.utils.data as data
 import numpy as np
 import random
 import pandas as pd
-from models.modeling import VisionTransformer, CONFIGS
-from xmodels import *
 import torch.backends.cudnn as cudnn
+
+# Optional imports for classification models (not required for segmentation)
+try:
+    from pudb import set_trace
+except ImportError:
+    set_trace = None
+
+try:
+    from models.modeling import VisionTransformer, CONFIGS
+except ImportError:
+    VisionTransformer = None
+    CONFIGS = None
+
+try:
+    from xmodels import *
+except ImportError:
+    pass  # xmodels not available in segmentation environment
 
 # ======================== Dataset ========================
 

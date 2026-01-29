@@ -284,6 +284,9 @@ def save_experiment_results(results, config, sweep_config=None, timestamp=None, 
                     lines.append(f"  {query_label}: [{', '.join(formatted_values)}]")
                 else:
                     lines.append(f"  {query_label}: {json.dumps(query_result, ensure_ascii=False, cls=CustomJSONEncoder)}")
+        elif key == "Per Query Averages":
+             lines.append(f"{key}:")
+             lines.append(json.dumps(value, indent=4, ensure_ascii=False, cls=CustomJSONEncoder))
         else:
             # 다른 결과들은 기존 방식으로 저장
             line = f"{key}: " + json.dumps(value, ensure_ascii=False, cls=CustomJSONEncoder)

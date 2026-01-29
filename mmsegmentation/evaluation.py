@@ -133,13 +133,14 @@ def calculate_l0_norm(original_img: np.ndarray, adversarial_img: np.ndarray) -> 
     """
     Calculate L0 norm between original and adversarial images.
     L0 norm represents the number of pixels that have been modified.
+    A pixel is counted as modified if ANY of its channels differs.
 
     Args:
         original_img (np.ndarray): Original image array (H, W, 3), uint8
         adversarial_img (np.ndarray): Adversarial image array (H, W, 3), uint8
 
     Returns:
-        int: Number of modified pixels considering all channels
+        int: Number of modified pixels (not channels)
     """
     if original_img.shape != adversarial_img.shape:
         raise ValueError("Images must have the same shape")
@@ -147,7 +148,8 @@ def calculate_l0_norm(original_img: np.ndarray, adversarial_img: np.ndarray) -> 
     if original_img.dtype != np.uint8 or adversarial_img.dtype != np.uint8:
         raise ValueError("Images must be in uint8 format")
     
-    return int(np.sum(np.abs(original_img - adversarial_img) > 0))
+    # Count pixels where ANY channel differs (not total channel differences)
+    return int(np.any(original_img != adversarial_img, axis=2).sum())
 
 def calculate_pixel_ratio(original_img: np.ndarray, adversarial_img: np.ndarray) -> float:
     """

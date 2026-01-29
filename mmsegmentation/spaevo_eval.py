@@ -1,7 +1,6 @@
 """
-PointWise Attack Evaluation for MMSegmentation
-Based on the original PointWise attack for image classification,
-adapted for semantic segmentation models.
+SpaEvO Attack Evaluation for MMSegmentation
+Adapted from PointWise evaluation script.
 """
 
 import os
@@ -13,54 +12,27 @@ import datetime
 import importlib
 import numpy as np
 from PIL import Image
-import multiprocessing as mp
+import setproctitle
+import argparse
 
 # 상위 디렉토리와 현재 디렉토리를 sys.path에 추가
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.join(current_dir, '..')
 sys.path.insert(0, parent_dir)
 sys.path.insert(0, current_dir)
+# Robust-Semantic-Segmentation 경로 추가
+sys.path.insert(0, os.path.join(parent_dir, 'Robust-Semantic-Segmentation'))
 
 from mmseg.apis import init_model, inference_model
 from dataset import CitySet, ADESet, VOCSet
-from pointwise_attack import PointWiseAttack, l0
-from utils_se import salt_pepper_noise, rand_img_upscale
+from spaevo_attack import SpaEvoAttack
+from utils_se import salt_pepper_noise, rand_img_upscale, l0
 
 from function import *
 from evaluation import *
 from utils import save_experiment_results
 
-import argparse
-import setproctitle
-
-
-def load_config(config_path):
-    """Load and return config dictionary from a python file at config_path."""
-    spec = importlib.util.spec_from_file_location("config", config_path)
-    config_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(config_module)
-    return config_module.config
-
-
-def init_model_for_process(model_configs, dataset, model_name, device):
-    """각 프로세스에서 모델을 초기화하는 함수"""
-    if model_name == "setr":
-        model = init_model(model_configs["config"], None, 'cuda')
-        checkpoint = torch.load(model_configs["checkpoint"], map_location='cuda', weights_only=False)
-        model.backbone.patch_embed.projection.bias = torch.nn.Parameter(
-            torch.zeros(checkpoint["state_dict"]["backbone.patch_embed.projection.weight"].shape[0], device='cuda')
-        )
-        model.load_state_dict(checkpoint['state_dict'])
-    else:
-        model = init_model(model_configs["config"], None, device)
-        checkpoint = torch.load(model_configs["checkpoint"], map_location=device, weights_only=False)
-        model.load_state_dict(checkpoint['state_dict'])
-
-    del checkpoint
-    torch.cuda.empty_cache()
-    
-    return model
-
+# PointWise에서 사용한 gen_starting_point_seg 재사용 (로컬 정의)
 
 def gen_starting_point_seg(attack, oimg, original_pred_labels, seed=None, init_mode='salt_pepper', dataset_name='voc2012'):
     """
@@ -86,7 +58,7 @@ def gen_starting_point_seg(attack, oimg, original_pred_labels, seed=None, init_m
     if dataset_name == 'cityscapes':
         scales = [1, 2, 4, 8, 16, 32, 64]  # 고해상도 (2048x1024)
     elif dataset_name in ['imagenet', 'voc2012', 'VOC2012', 'ade20k']:
-        scales = [1, 2, 4, 8, 16, 32, 64]      # 중해상도 (~224-500px)
+        scales = [1, 2, 4, 8, 16, 32]      # 중해상도 (~224-500px)
     else:  # cifar10, cifar100
         scales = [1, 2, 4, 8, 16]          # 저해상도 (32x32)
     
@@ -129,212 +101,142 @@ def gen_starting_point_seg(attack, oimg, original_pred_labels, seed=None, init_m
             elif i + 1 < len(scales):
                 i += 1
             else:
-                # Fallback: 모든 scale 실패 → 전체 랜덤 이미지 사용
-                print(f'Fallback: using full random image as starting point')
-                timg = torch.rand_like(oimg).cuda() * 255.0
-                nquery += 1
+                # Fallback: 모든 scale에서 adversarial starting point를 찾지 못함
+                print(f'Warning: No adversarial starting point found. Using last scale={scales[i]} as fallback.')
                 D = torch.ones(nquery, dtype=int).cuda() * l0(oimg, timg)
                 return timg, nquery, D
 
 
+def load_config(config_path):
+    spec = importlib.util.spec_from_file_location("config", config_path)
+    config_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config_module)
+    return config_module.config
+
+
+def init_model_for_process(model_configs, dataset, model_name, device):
+    if model_name == "setr":
+        model = init_model(model_configs["config"], None, 'cuda')
+        checkpoint = torch.load(model_configs["checkpoint"], map_location='cuda', weights_only=False)
+        model.backbone.patch_embed.projection.bias = torch.nn.Parameter(
+            torch.zeros(checkpoint["state_dict"]["backbone.patch_embed.projection.weight"].shape[0], device='cuda')
+        )
+        model.load_state_dict(checkpoint['state_dict'])
+    else:
+        model = init_model(model_configs["config"], None, device)
+        checkpoint = torch.load(model_configs["checkpoint"], map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint['state_dict'])
+
+    del checkpoint
+    torch.cuda.empty_cache()
+    return model
+
+
 def process_single_image(args):
-    """단일 이미지를 처리하는 함수"""
-    (img_bgr, filename, gt, model_configs, config, base_dir, idx, total_images, save_steps) = args
+    (img_bgr, filename, gt, model_configs, config, base_dir, idx, total_images) = args
     
-    # 프로세스별 모델 초기화
     model = init_model_for_process(model_configs, config["dataset"], config["model"], config["device"])
-    
-    setproctitle.setproctitle(f"({idx+1}/{total_images})_PointWise_Attack_{config['dataset']}_{config['model']}")
+    setproctitle.setproctitle(f"({idx+1}/{total_images})_SpaEvO_{config['dataset']}_{config['model']}")
 
+    # Prepare inputs
     img_tensor_bgr = torch.from_numpy(img_bgr.copy()).unsqueeze(0).permute(0, 3, 1, 2).float().to(config["device"])
-    gt_tensor = torch.from_numpy(gt.copy()).unsqueeze(0).long().to(config["device"])
-
-    ori_result = inference_model(model, img_bgr.copy()) 
+    
+    # Original prediction
+    ori_result = inference_model(model, img_bgr.copy())
     ori_pred = ori_result.pred_sem_seg.data.squeeze().cpu().numpy()
     original_pred_labels = ori_result.pred_sem_seg.data.squeeze().cuda()
 
-    # PointWise Attack 객체 생성
-    attack = PointWiseAttack(
+    # Initialize SpaEvO Attack
+    attack = SpaEvoAttack(
         model=model,
-        cfg=config,
-        is_mmseg=True,
-        is_detectron2=False,
+        n_pix=config.get("n_pix", 196),
+        pop_size=config.get("pop_size", 10),
+        cr=config.get("cr", 0.9),
+        mu=config.get("mu", 0.01),
+        seed=config.get("seed", 0),
         success_threshold=config.get("success_threshold", 0.01),
-        verbose=config.get("verbose", False)
+        verbose=config.get("verbose", False),
+        device=config["device"],
+        is_mmseg=True
     )
     attack.set_ignore_index(config["dataset"])  # 데이터셋별 ignore index 설정
 
-    # Starting Point 생성
+    # Generate Starting Point (timg)
     print(f"\n[{idx+1}/{total_images}] {filename}: Generating starting point...")
-    timg, init_nqry, _ = gen_starting_point_seg(
+    timg, init_nqry, init_D = gen_starting_point_seg(
         attack, img_tensor_bgr, original_pred_labels, 
         seed=config.get("seed", 0), 
         init_mode=config.get("init_mode", "salt_pepper"),
         dataset_name=config["dataset"]
     )
 
-    levels = len(save_steps)
-    adv_img_bgr_list = []
-    adv_query_list = []
-    total_nquery = init_nqry
-
-    adv_img_bgr_list = []
-    adv_query_list = []
-    total_nquery = init_nqry
-
-    # 0번(원본)은 나중에 채움
-
-    # PointWise Attack 실행
-    print(f"[{idx+1}/{total_images}] {filename}: Running PointWise attack (mode={config['attack_mode']})...")
+    print(f"[{idx+1}/{total_images}] {filename}: Running SpaEvO attack...")
     
+    # Run Attack
+    # SpaEvO modifies timg to look like oimg while maintaining adversarial status
     snapshot_interval = 200
-    if config["attack_mode"] == "single":
-        x, nquery, D, snapshots = attack.pw_perturb(
-            img_tensor_bgr.squeeze(0), timg.squeeze(0), original_pred_labels,
-            max_query=config["max_query"],
-            snapshot_interval=snapshot_interval
-        )
-    elif config["attack_mode"] == "multiple":
-        x, nquery, D, snapshots = attack.pw_perturb_multiple(
-            img_tensor_bgr.squeeze(0), timg.squeeze(0), original_pred_labels,
-            npix=config.get("npix", 196),
-            max_query=config["max_query"],
-            snapshot_interval=snapshot_interval
-        )
-    elif config["attack_mode"] == "scheduling":
-        x, nquery, D, snapshots = attack.pw_perturb_multiple_scheduling(
-            img_tensor_bgr.squeeze(0), timg.squeeze(0), original_pred_labels,
-            npix=config.get("npix", 196),
-            max_query=config["max_query"],
-            snapshot_interval=snapshot_interval
-        )
-    else:
-        raise ValueError(f"Unknown attack mode: {config['attack_mode']}")
-
-    total_nquery += nquery
+    adv_np, nquery, D, snapshots = attack.evo_perturb(
+        img_tensor_bgr.squeeze(0), timg.squeeze(0), original_pred_labels,
+        max_query=config["max_query"],
+        snapshot_interval=snapshot_interval
+    )
     
-    # Reshape result to tensor
-    adv_img_bgr = torch.from_numpy(x.reshape(img_tensor_bgr.squeeze(0).shape)).unsqueeze(0).float().cuda()
+    total_query = init_nqry + nquery
     
-    # Save results by steps
-    for step in save_steps:
-        target_q = step - init_nqry
-        img_to_add = None
-        current_query = step
-        
-        if step == 0:
-            img_to_add = img_tensor_bgr
-        else:
-             if target_q < 0:
-                 # Init 단계
-                 img_to_add = timg.unsqueeze(0) if timg.dim()==3 else timg
-                 # Check dim
-                 if img_to_add.dim() == 3: img_to_add = img_to_add.unsqueeze(0)
-             else:
-                 if target_q > nquery:
-                     # Finished early
-                     img_to_add = adv_img_bgr
-                     current_query = total_nquery
-                 else:
-                     key = (target_q // snapshot_interval) * snapshot_interval
-                     if key in snapshots:
-                         snap_np = snapshots[key]
-                         img_to_add = torch.from_numpy(snap_np).unsqueeze(0).float().to(config["device"])
-                     else:
-                         img_to_add = adv_img_bgr 
-                         current_query = total_nquery
-
-        adv_img_bgr_list.append(img_to_add)
-        adv_query_list.append(current_query)
-
-    # Ensure final result is included if not covered
-    if total_nquery > adv_query_list[-1]:
-         adv_img_bgr_list.append(adv_img_bgr)
-         adv_query_list.append(total_nquery)
-
-    # 결과 저장
+    # Save results
     current_img_save_dir = os.path.join(base_dir, os.path.splitext(os.path.basename(filename))[0])
     os.makedirs(current_img_save_dir, exist_ok=True)
-
+    
+    # Save final adv image
+    adv_img_bgr = torch.from_numpy(adv_np.reshape(img_tensor_bgr.squeeze(0).shape)).unsqueeze(0).float()
+    adv_img_np = adv_img_bgr.squeeze(0).permute(1, 2, 0).numpy().astype(np.uint8)
+    
     Image.fromarray(img_bgr[:, :, ::-1]).save(os.path.join(current_img_save_dir, "original.png"))
     Image.fromarray(gt).save(os.path.join(current_img_save_dir, "gt.png"))
-
-    print(f"[{idx+1}/{total_images}] {filename}: Completed with {total_nquery} queries")
     
-    # 메트릭 계산
-    l0_metrics = []
-    ratio_metrics = []
-    impact_metrics = []
+
     
-    for i, adv_img in enumerate(adv_img_bgr_list):
-        query_val = adv_query_list[i]
-        adv_img_np = adv_img.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-
-        if i == 0:
-            l0_norm = 0
-            pixel_ratio = 0.0
-            impact = 0.0
-        else:
-            query_img_save_dir = os.path.join(current_img_save_dir, f"{query_val}query")
-            os.makedirs(query_img_save_dir, exist_ok=True)
-
-            adv_result = inference_model(model, adv_img_np)
-            adv_pred = adv_result.pred_sem_seg.data.squeeze().cpu().numpy()
-            delta_img = np.abs(img_bgr.astype(np.int16) - adv_img_np.astype(np.int16)).astype(np.uint8)
-
-            l0_norm = calculate_l0_norm(img_bgr, adv_img_np)
-            pixel_ratio = calculate_pixel_ratio(img_bgr, adv_img_np)
-            impact = calculate_impact(img_bgr, adv_img_np, ori_pred, adv_pred)
-            
-            # 최종 success_ratio 계산 (배경/ignore 제외, 원본 예측 대비 변경된 픽셀 비율)
-            ignore_index = 255 if config["dataset"].lower() == "cityscapes" else 0
-            foreground_mask = ori_pred != ignore_index
-            if foreground_mask.sum() > 0:
-                success_ratio = ((adv_pred != ori_pred) & foreground_mask).sum() / foreground_mask.sum()
-            else:
-                success_ratio = 0.0
-
-            Image.fromarray(adv_img_np[:, :, ::-1]).save(os.path.join(query_img_save_dir, "adv.png"))
-            Image.fromarray(delta_img).save(os.path.join(query_img_save_dir, "delta.png"))
-
-            visualize_segmentation(img_bgr, ori_pred,
-                                save_path=os.path.join(query_img_save_dir, "ori_seg.png"),
-                                alpha=0.5, dataset=config["dataset"])
-
-            visualize_segmentation(adv_img_np, adv_pred,
-                                save_path=os.path.join(query_img_save_dir, "adv_seg.png"),
-                                alpha=0.5, dataset=config["dataset"])
-
-        if i == 0:
-            success_ratio = 0.0
-        print(f"  L0 norm: {l0_norm}, Pixel ratio: {pixel_ratio:.4f}, Impact: {impact:.4f}, Success Ratio: {success_ratio:.4f}")
-
-        l0_metrics.append(l0_norm)
-        ratio_metrics.append(pixel_ratio)
-        impact_metrics.append(impact)
+    # Calculate metrics
+    l0_norm = calculate_l0_norm(img_bgr, adv_img_np)
+    pixel_ratio = calculate_pixel_ratio(img_bgr, adv_img_np)
+    
+    adv_result = inference_model(model, adv_img_np)
+    adv_pred = adv_result.pred_sem_seg.data.squeeze().cpu().numpy()
+    impact = calculate_impact(img_bgr, adv_img_np, ori_pred, adv_pred)
+    
+    # 최종 success_ratio 계산 (배경/ignore 제외, 원본 예측 대비 변경된 픽셀 비율)
+    ignore_index = 255 if config["dataset"].lower() == "cityscapes" else 0
+    foreground_mask = ori_pred != ignore_index
+    if foreground_mask.sum() > 0:
+        success_ratio = ((adv_pred != ori_pred) & foreground_mask).sum() / foreground_mask.sum()
+    else:
+        success_ratio = 0.0
+    
+    print(f"[{idx+1}/{total_images}] {filename}: Completed. L0={l0_norm}, Ratio={pixel_ratio:.4f}, Impact={impact:.4f}, Success Ratio={success_ratio:.4f}")
+    
+    # Visualizations
+    visualize_segmentation(img_bgr, ori_pred,
+                        save_path=os.path.join(current_img_save_dir, "ori_seg.png"),
+                        alpha=0.5, dataset=config["dataset"])
+    visualize_segmentation(adv_img_np, adv_pred,
+                        save_path=os.path.join(current_img_save_dir, "adv_seg.png"),
+                        alpha=0.5, dataset=config["dataset"])
 
     # 각 이미지별 결과를 JSON으로 저장
     # foreground 픽셀 수 및 공격 실패 픽셀 수 계산
-    ignore_index = 255 if config["dataset"].lower() == "cityscapes" else 0
-    foreground_mask = ori_pred != ignore_index
     foreground_pixels = int(foreground_mask.sum())
-    
-    # 마지막 adversarial 이미지의 예측 사용
-    if len(adv_img_bgr_list) > 1:
-        final_adv_np = adv_img_bgr_list[-1].squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-        final_adv_result = inference_model(model, final_adv_np)
-        final_adv_pred = final_adv_result.pred_sem_seg.data.squeeze().cpu().numpy()
-        unchanged_pixels = int(((final_adv_pred == ori_pred) & foreground_mask).sum())
-        changed_pixels = int(((final_adv_pred != ori_pred) & foreground_mask).sum())
-    else:
-        unchanged_pixels = foreground_pixels
-        changed_pixels = 0
+    unsuccess_pixel = int(((adv_pred == ori_pred) & foreground_mask).sum())
+    success_pixel = int(((adv_pred != ori_pred) & foreground_mask).sum())
     
     # 쿼리별 결과 생성 (스냅샷 활용)
     query_history = []
     D_numpy = D.cpu().numpy() if isinstance(D, torch.Tensor) else D
     
-    # 정수형 키(쿼리 번호)만 추출하여 정렬
+    # 쿼리별 결과 생성 (스냅샷 활용)
+    query_history = []
+    D_numpy = D.cpu().numpy() if isinstance(D, torch.Tensor) else D
+    
+    # 정수형 키만 추출하여 정렬
     snapshot_queries = sorted([k for k in snapshots.keys() if isinstance(k, int)])
     
     for query_num in snapshot_queries:
@@ -343,17 +245,8 @@ def process_single_image(args):
         
         # 해당 쿼리 시점의 메트릭 계산
         if query_num == 0:
-            # 0번 쿼리는 초기 상태이므로 L0 직접 계산 (또는 D의 첫 값?)
-            # D는 공격 진행 중 기록되므로 0번 쿼리 시점(공격 전)과 다를 수 있음
-            # 스냅샷 이미지로 직접 계산
-            l0_at_q = int((snapshot_np != img_bgr).sum() / 3) # 간단한 L0 계산 (RGB 채널 고려)
-            # 정확한 L0 함수 사용 권장: from pointwise_attack import l0_distance
-            # 여기서는 간단히 diff로 계산. (img_bgr은 원본)
-            # l0_distance 함수가 있다면 사용:
-            # l0_at_q = l0_distance(img_bgr, snapshot_np)
-            # 임시로 numpy 계산
+            # 0번 쿼리는 초기 상태, L0 직접 계산
             diff = np.abs(snapshot_np.astype(int) - img_bgr.astype(int))
-            # 픽셀 단위 L0 (채널 중 하나라도 다르면 1)
             l0_at_q = int(np.sum(np.sum(diff, axis=2) > 0))
         else:
             l0_at_q = int(D_numpy[query_num-1]) if query_num-1 < len(D_numpy) else int(D_numpy[-1])
@@ -368,20 +261,21 @@ def process_single_image(args):
         unsuccess_pixel_at_q = int(((snapshot_pred == ori_pred) & foreground_mask).sum())
         impact_at_q = calculate_impact(img_bgr, snapshot_np, ori_pred, snapshot_pred)
         success_ratio_at_q = success_pixel_at_q / foreground_pixels if foreground_pixels > 0 else 0.0
-        
+
         # 이미지 저장 (0 또는 200 단위)
         if query_num == 0 or query_num % 200 == 0:
             save_q_dir = os.path.join(current_img_save_dir, f"{query_num}query")
             os.makedirs(save_q_dir, exist_ok=True)
             # snapshot_np is (H, W, C) in BGR, convert to RGB for PIL
             Image.fromarray(snapshot_np[:, :, ::-1]).save(os.path.join(save_q_dir, "adv.png"))
+            
             visualize_segmentation(snapshot_np, snapshot_pred, 
                 save_path=os.path.join(save_q_dir, "adv_seg.png"),
                 alpha=0.5, dataset=config["dataset"])
             visualize_segmentation(snapshot_np, snapshot_pred, 
                 save_path=os.path.join(save_q_dir, "adv_seg_only.png"),
                 alpha=1.0, dataset=config["dataset"])
-
+        
         query_history.append({
             'query': query_num,
             'l0': l0_at_q,
@@ -394,20 +288,20 @@ def process_single_image(args):
 
     # Final snapshot 처리
     if 'final' in snapshots:
-        final_query = snapshots.get('final_query', total_nquery)
-        # 이미 정수형 키에 포함되어 있는지 확인 (중복 방지)
+        final_query = snapshots.get('final_query', nquery)
+
         if final_query not in snapshot_queries:
             snapshot_img = snapshots['final']
             snapshot_np = np.transpose(snapshot_img, (1, 2, 0)).astype(np.uint8)
             
-            # 메트릭 계산 - D의 마지막 값 사용
             l0_at_q = int(D_numpy[final_query-1]) if final_query > 0 and final_query-1 < len(D_numpy) else int(D_numpy[-1] if len(D_numpy) > 0 else 0)
-            if final_query == 0: # 혹시 0이면 직접 계산
+            if final_query == 0:
                  diff = np.abs(snapshot_np.astype(int) - img_bgr.astype(int))
                  l0_at_q = int(np.sum(np.sum(diff, axis=2) > 0))
 
             pixel_ratio_at_q = calculate_pixel_ratio(img_bgr, snapshot_np)
             
+            # 예측 및 success_ratio 계산
             snapshot_result = inference_model(model, snapshot_np)
             snapshot_pred = snapshot_result.pred_sem_seg.data.squeeze().cpu().numpy()
             
@@ -415,11 +309,13 @@ def process_single_image(args):
             unsuccess_pixel_at_q = int(((snapshot_pred == ori_pred) & foreground_mask).sum())
             impact_at_q = calculate_impact(img_bgr, snapshot_np, ori_pred, snapshot_pred)
             success_ratio_at_q = success_pixel_at_q / foreground_pixels if foreground_pixels > 0 else 0.0
-            
+
             # 이미지 저장 (Final은 무조건 저장)
-            save_q_dir = os.path.join(current_img_save_dir, f"{final_query}query")
+            final_save_query = init_nqry + final_query
+            save_q_dir = os.path.join(current_img_save_dir, f"{final_save_query}query")
             os.makedirs(save_q_dir, exist_ok=True)
             Image.fromarray(snapshot_np[:, :, ::-1]).save(os.path.join(save_q_dir, "adv.png"))
+            
             visualize_segmentation(snapshot_np, snapshot_pred, 
                 save_path=os.path.join(save_q_dir, "adv_seg.png"),
                 alpha=0.5, dataset=config["dataset"])
@@ -439,45 +335,43 @@ def process_single_image(args):
     
     image_result = {
         'filename': filename,
-        'total_query': total_nquery,
-        'l0': l0_metrics[-1] if l0_metrics else 0,
-        'pixel_ratio': ratio_metrics[-1] if ratio_metrics else 0.0,
-        'impact': impact_metrics[-1] if impact_metrics else 0.0,
+        'total_query': total_query,
+        'l0': int(l0_norm),
+        'pixel_ratio': float(pixel_ratio),
+        'impact': float(impact),
         'success_ratio': float(success_ratio),
         'foreground_pixels': foreground_pixels,
-        'success_pixel': changed_pixels,
-        'unsuccess_pixel': unchanged_pixels,
-        'attack_mode': config['attack_mode'],
+        'success_pixel': success_pixel,
+        'unsuccess_pixel': unsuccess_pixel,
         'max_query': config['max_query'],
+        'pop_size': config.get('pop_size', 10),
+        'n_pix': config.get('n_pix', 196),
         'success_threshold': config['success_threshold'],
         'query_history': query_history
     }
     with open(os.path.join(current_img_save_dir, 'result.json'), 'w') as f:
         json.dump(image_result, f, indent=2)
 
-    # 모델 메모리 정리
     del model
     del attack
     torch.cuda.empty_cache()
-    
+
     return {
         'img_bgr': img_bgr,
         'gt': gt,
-        'filename': filename,
-        'adv_img_bgr_list': adv_img_bgr_list,
-        'adv_query_list': adv_query_list,
-        'total_query': total_nquery,
-        'l0_metrics': l0_metrics,
-        'ratio_metrics': ratio_metrics,
-        'impact_metrics': impact_metrics,
+        'adv_img': adv_img_np,
+        'l0': l0_norm,
+        'ratio': pixel_ratio,
+        'impact': impact,
+        'queries': total_query,
         'distance_history': D,
         'success_ratio': success_ratio,
-        'query_history': query_history
+        'query_history': query_history,
+        'snapshots': snapshots
     }
 
-
 def main(config):
-    # Model configs (rs_eval.py와 동일)
+    # Model configs (same as pw_eval.py)
     model_configs = {
         "cityscapes": {
             "mask2former": {
@@ -528,12 +422,6 @@ def main(config):
     }
 
     device = config["device"]
-
-    if config["dataset"] not in model_configs:
-        raise ValueError(f"Unsupported dataset: {config['dataset']}")
-    if config["model"] not in model_configs[config["dataset"]]:
-        raise ValueError(f"Unsupported model: {config['model']} for dataset {config['dataset']}")
-
     model_cfg = model_configs[config["dataset"]][config["model"]]
 
     # Load dataset
@@ -555,56 +443,69 @@ def main(config):
     dataset.filenames = dataset.filenames[:min(len(dataset.filenames), num_images)]
     dataset.gt_images = dataset.gt_images[:min(len(dataset.gt_images), num_images)]
 
-    # 결과 저장 디렉토리
+    # Result directory
     current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_name = f"{config['dataset']}_{config['model']}_pointwise_{current_time}"
     base_dir = os.path.join(config["base_dir"], current_time)
     os.makedirs(base_dir, exist_ok=True)
 
-    snapshot_interval = config.get("snapshot_interval", 200)
-    save_steps = list(range(0, config["max_query"] + 1, snapshot_interval))
-    levels = len(save_steps)
-
-    # 처리 데이터 준비
     process_args = []
     for idx, (img_bgr, filename, gt) in enumerate(zip(dataset.images, dataset.filenames, dataset.gt_images)):
-        process_args.append((img_bgr, filename, gt, model_cfg, config, base_dir, idx, len(dataset.images), save_steps))
+        process_args.append((img_bgr, filename, gt, model_cfg, config, base_dir, idx, len(dataset.images)))
 
-    # 모델 초기화 (메트릭 계산용)
+    # Init model for mIoU calc
     model = init_model_for_process(model_cfg, config["dataset"], config["model"], device)
 
-    # 순차 처리
-    print(f"\nProcessing {len(process_args)} images with PointWise Attack...")
-    results = []
+    # Run
+    print(f"\nProcessing {len(process_args)} images with SpaEvO Attack...")
     
     img_list = []
     gt_list = []
-    filename_list = []
+    
+    snapshot_interval = config.get("snapshot_interval", 200)
+    levels = config["max_query"] // snapshot_interval + 1
     adv_img_lists = [[] for _ in range(levels)]
-    all_l0_metrics = [[] for _ in range(levels)]
-    all_ratio_metrics = [[] for _ in range(levels)]
-    all_impact_metrics = [[] for _ in range(levels)]
-    all_queries = []
-    all_success_ratios = []
+    l0_metrics = []
+    ratio_metrics = []
+    impact_metrics = []
+    query_metrics = []
+    success_ratio_metrics = []
     all_query_histories = []
 
-    for args in tqdm(process_args, desc="PointWise Attack"):
+    for args in tqdm(process_args, desc="SpaEvO Attack"):
         result = process_single_image(args)
-        results.append(result)
         
         img_list.append(result['img_bgr'])
         gt_list.append(result['gt'])
-        filename_list.append(result['filename'])
-        all_queries.append(result['total_query'])
-        all_success_ratios.append(result['success_ratio'])
+        
+        snapshots = result['snapshots']
+        for i in range(levels):
+            q = i * snapshot_interval
+            # Use snapshot if available, else final (attack ended)
+            if q in snapshots and q <= result['queries']: 
+                 # Note: result['queries'] is init+nqry, but snapshot keys are nqry (evo only).
+                 # Wait, snapshot keys are 0, 200 etc. (evo steps).
+                 # So we rely on snapshot keys. 
+                 pass
+            
+            # Logic: 
+            # keys: 0, 200, ... 
+            # If q in snapshots, use it. 
+            # If not in snapshots (e.g. q=1000 but finished at 452), use final.
+            
+            target_img = None
+            if q in snapshots:
+                target_img = snapshots[q]
+            else:
+                target_img = snapshots['final']
+            
+            adv_img_lists[i].append(np.transpose(target_img, (1, 2, 0)).astype(np.uint8))
+        
+        l0_metrics.append(result['l0'])
+        ratio_metrics.append(result['ratio'])
+        impact_metrics.append(result['impact'])
+        query_metrics.append(result['queries'])
+        success_ratio_metrics.append(result['success_ratio'])
         all_query_histories.append(result['query_history'])
-
-        for i, adv_img in enumerate(result['adv_img_bgr_list']):
-            if i < levels:
-                adv_img_lists[i].append(adv_img.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8))
-                all_l0_metrics[i].append(result['l0_metrics'][i])
-                all_ratio_metrics[i].append(result['ratio_metrics'][i])
-                all_impact_metrics[i].append(result['impact_metrics'][i])
 
     # 쿼리별 평균 메트릭 계산
     query_step_averages = {}
@@ -634,7 +535,8 @@ def main(config):
         }
         per_query_avg.append(avg_entry)
 
-    # mIoU 계산
+    # mIoU calc
+    # mIoU calc
     _, init_mious = eval_miou(model, img_list, img_list, gt_list, config)
     
     benign_to_adv_mious = []
@@ -646,10 +548,6 @@ def main(config):
     avg_miou_no0_benign = []
     avg_miou_no0_gt = []
 
-    mean_l0 = []
-    mean_ratio = []
-    mean_impact = []
-    
     for i in range(levels):
         if adv_img_lists[i]:
             benign_to_adv_miou, gt_to_adv_miou = eval_miou(model, img_list, adv_img_lists[i], gt_list, config)
@@ -668,13 +566,8 @@ def main(config):
             per_cat_gt = np.array(gt_to_adv_miou['per_category_iou'])
             avg_miou_no0_gt.append(np.mean(per_cat_gt[1:]) if len(per_cat_gt) > 1 else per_cat_gt[0])
             
-        mean_l0.append(np.mean(all_l0_metrics[i]).item() if all_l0_metrics[i] else 0)
-        mean_ratio.append(np.mean(all_ratio_metrics[i]).item() if all_ratio_metrics[i] else 0)
-        mean_impact.append(np.mean(all_impact_metrics[i]).item() if all_impact_metrics[i] else 0)
-
     final_results = {
-        "Attack Method": "PointWise",
-        "Attack Mode": config["attack_mode"],
+        "Attack Method": "SpaEvO",
         "Init mIoU": init_mious['mean_iou'],
         "Adversarial mIoU(benign)": benign_to_adv_mious,
         "Adversarial mIoU(gt)": gt_to_adv_mious,
@@ -682,16 +575,17 @@ def main(config):
         "Overall Accuracy(benign)": oacc_benign,
         "Accuracy(gt)": acc_gt,
         "Overall Accuracy(gt)": oacc_gt,
-        "L0": mean_l0,
-        "Ratio": mean_ratio,
-        "Impact": mean_impact,
+        "L0": np.mean(l0_metrics),
+        "Ratio": np.mean(ratio_metrics),
+        "Impact": np.mean(impact_metrics),
         "Average mIoU excluding label 0 (benign)": avg_miou_no0_benign,
         "Average mIoU excluding label 0 (gt)": avg_miou_no0_gt,
-        "Average Queries": np.mean(all_queries).item(),
+        "Average Queries": np.mean(query_metrics),
         "Max Query Limit": config["max_query"],
-        "NPix": config.get("npix", 196),
-        "Success Ratios (per image)": all_success_ratios,
-        "Mean Success Ratio": np.mean(all_success_ratios).item(),
+        "Pop Size": config.get("pop_size", 10),
+        "NPix": config.get("n_pix", 196),
+        "Success Ratios (per image)": success_ratio_metrics,
+        "Mean Success Ratio": np.mean(success_ratio_metrics),
         "Per Query Averages": per_query_avg
     }
 
@@ -705,37 +599,35 @@ def main(config):
                             timestamp=current_time,
                             save_dir=base_dir)
 
-
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Run PointWise attack evaluation.")
+    parser = argparse.ArgumentParser(description="Run SpaEvO attack evaluation.")
     parser.add_argument("--config", type=str, required=True, help="Path to the config file.")
     parser.add_argument('--device', type=str, default='cuda', help='Device to use.')
     parser.add_argument('--max_query', type=int, default=1000, help='Maximum queries for attack.')
     parser.add_argument('--num_images', type=int, default=10, help='Number of images to evaluate.')
-    parser.add_argument('--attack_mode', type=str, default='scheduling', 
-                        choices=['single', 'multiple', 'scheduling'],
-                        help='Attack mode: single, multiple, or scheduling.')
-    parser.add_argument('--npix', type=int, default=196, help='Pixels per group for multiple mode.')
-    parser.add_argument('--success_threshold', type=float, default=0.01, 
-                        help='Threshold for attack success (ratio of changed pixels).')
-    parser.add_argument('--init_mode', type=str, default='random',
-                        choices=['salt_pepper', 'random'],
-                        help='Starting point initialization mode.')
+    parser.add_argument('--pop_size', type=int, default=10, help='Population size.')
+    parser.add_argument('--n_pix', type=int, default=196, help='Number of pixels to keep (sparseness).')
+    parser.add_argument('--cr', type=float, default=0.9, help='Crossover rate.')
+    parser.add_argument('--mu', type=float, default=0.01, help='Mutation rate.')
+    parser.add_argument('--success_threshold', type=float, default=0.01, help='Threshold for attack success.')
+    parser.add_argument('--init_mode', type=str, default='random', help='Starting point initialization mode.')
     parser.add_argument('--seed', type=int, default=0, help='Random seed.')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output.')
     args = parser.parse_args()
 
     config = load_config(args.config)
-    config["attack_method"] = "PointWise"
+    config["attack_method"] = "SpaEvO"
     config["device"] = args.device
     config["max_query"] = args.max_query
     config["num_images"] = args.num_images
-    config["attack_mode"] = args.attack_mode
-    config["npix"] = args.npix
+    config["pop_size"] = args.pop_size
+    config["n_pix"] = args.n_pix
+    config["cr"] = args.cr
+    config["mu"] = args.mu
     config["success_threshold"] = args.success_threshold
     config["init_mode"] = args.init_mode
     config["seed"] = args.seed
     config["verbose"] = args.verbose
-    config["base_dir"] = f"./data/PointWise/results/{config['dataset']}/{config['model']}"
+    config["base_dir"] = f"./data/SpaEvO/results/{config['dataset']}/{config['model']}"
 
     main(config)
